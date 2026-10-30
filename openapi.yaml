@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: KZ Moto System API
-  version: 0.6.0
+  version: 0.7.0
   summary: Multi-tenant management API for automotive repair shops.
   description: |
     REST API consumed directly by the web frontend (no BFF).
@@ -66,7 +66,7 @@ tags:
   - name: purchasing
     description: Purchase orders, NF-e import, review and confirmation.
   - name: finance
-    description: Accounts payable (payments in a later phase).
+    description: Accounts, categories, ledger, transfers, payables and receivables.
 paths:
   /healthz:
     get:
@@ -3686,17 +3686,359 @@ paths:
         "409": { $ref: "#/components/responses/Conflict" }
         "415": { $ref: "#/components/responses/UnsupportedMediaType" }
         "422": { $ref: "#/components/responses/ValidationFailed" }
+  /api/v1/tenants/{tenantID}/financial-accounts:
+    get:
+      operationId: listFinancialAccounts
+      tags: [finance]
+      summary: "Financial accounts with balances"
+      description: "Requires `finance.read`."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/IncludeArchived"
+      responses:
+        "200":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FinancialAccountList"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+    post:
+      operationId: createFinancialAccount
+      tags: [finance]
+      summary: "Create a financial account"
+      description: "Requires `finance.manage`. Card acquirers carry fees (%) and settlement days (defaults: debit D+1, credit D+30, fees 0)."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FinancialAccountRequest"
+      responses:
+        "201":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FinancialAccount"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+  /api/v1/tenants/{tenantID}/financial-accounts/{accountID}:
+    get:
+      operationId: getFinancialAccount
+      tags: [finance]
+      summary: "A financial account with its balance"
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/AccountID"
+      responses:
+        "200":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FinancialAccount"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    patch:
+      operationId: updateFinancialAccount
+      tags: [finance]
+      summary: "Update a financial account"
+      description: "Send the current `version`. The kind and opening balance are permanent."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/AccountID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FinancialAccountPatchRequest"
+      responses:
+        "200":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FinancialAccount"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+  /api/v1/tenants/{tenantID}/financial-categories:
+    get:
+      operationId: listFinancialCategories
+      tags: [finance]
+      summary: "Chart of accounts"
+      description: "System categories (purchases, sales, services, card fees...) are created on first use."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/IncludeArchived"
+      responses:
+        "200":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FinancialCategoryList"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+    post:
+      operationId: createFinancialCategory
+      tags: [finance]
+      summary: "Create an income or expense category"
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FinancialCategoryRequest"
+      responses:
+        "201":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FinancialCategory"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+  /api/v1/tenants/{tenantID}/financial-categories/{categoryID}:
+    patch:
+      operationId: updateFinancialCategory
+      tags: [finance]
+      summary: "Rename or deactivate a category"
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/FinCategoryID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FinancialCategoryPatchRequest"
+      responses:
+        "200":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FinancialCategory"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+  /api/v1/tenants/{tenantID}/financial-transactions:
+    get:
+      operationId: listFinancialTransactions
+      tags: [finance]
+      summary: "Financial ledger (append-only)"
+      description: "Filters use the cash date."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/AccountFilter"
+        - $ref: "#/components/parameters/FromDate"
+        - $ref: "#/components/parameters/ToDate"
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FinancialTransactionList"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+    post:
+      operationId: createFinancialTransaction
+      tags: [finance]
+      summary: "Post a manual income or expense"
+      description: "Requires `finance.manage` and an `Idempotency-Key`."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FinancialEntryRequest"
+      responses:
+        "201":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FinancialTransaction"
+        "200":
+          description: Replayed result of an earlier request with the same Idempotency-Key.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FinancialTransaction"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+  /api/v1/tenants/{tenantID}/financial-transactions/transfers:
+    post:
+      operationId: createFinancialTransfer
+      tags: [finance]
+      summary: "Transfer between accounts (two linked transactions)"
+      description: "Requires `finance.manage` and an `Idempotency-Key`."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FinancialTransferRequest"
+      responses:
+        "201":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FinancialTransactionLegs"
+        "200":
+          description: Replayed result of an earlier request with the same Idempotency-Key.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FinancialTransactionLegs"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+  /api/v1/tenants/{tenantID}/financial-transactions/{transactionID}/reverse:
+    post:
+      operationId: reverseFinancialTransaction
+      tags: [finance]
+      summary: "Reverse a manual entry or a whole transfer"
+      description: "Posts opposite entries; each entry is reversed at most once. Payment entries are reversed through the payment."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/TransactionID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReasonRequest"
+      responses:
+        "201":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FinancialTransactionLegs"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
   /api/v1/tenants/{tenantID}/accounts-payable:
     get:
       operationId: listAccountsPayable
       tags: [finance]
       summary: "Accounts payable by due date"
-      description: "Requires `finance.read`. Created by confirming supplier invoices."
+      description: "Requires `finance.read`."
       security: [{ bearerAuth: [] }]
       parameters:
         - $ref: "#/components/parameters/TenantID"
-        - $ref: "#/components/parameters/PayableStatus"
+        - $ref: "#/components/parameters/TitleStatus"
+        - $ref: "#/components/parameters/PartyFilter"
         - $ref: "#/components/parameters/PayableInvoiceFilter"
+        - $ref: "#/components/parameters/OriginTypeFilter"
+        - $ref: "#/components/parameters/OriginIDFilter"
         - $ref: "#/components/parameters/DueBefore"
       responses:
         "200":
@@ -3707,11 +4049,373 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/AccountPayableList"
+                $ref: "#/components/schemas/FinancialTitleList"
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "422": { $ref: "#/components/responses/ValidationFailed" }
+    post:
+      operationId: createAccountPayable
+      tags: [finance]
+      summary: "Register a manual payable"
+      description: "Requires `finance.manage`."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FinancialTitleRequest"
+      responses:
+        "201":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FinancialTitle"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+  /api/v1/tenants/{tenantID}/accounts-payable/{payableID}:
+    get:
+      operationId: getAccountPayable
+      tags: [finance]
+      summary: "A payable with its payments"
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/TitleIDPayable"
+      responses:
+        "200":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FinancialTitle"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/tenants/{tenantID}/accounts-payable/{payableID}/payments:
+    post:
+      operationId: payPayable
+      tags: [finance]
+      summary: "Settle a payable (partial allowed)"
+      description: "Requires `finance.pay` and an `Idempotency-Key`. `amount` is the principal settled (cannot exceed the open balance); the money moved is amount + interest + fine - discount and is posted to the ledger."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/TitleIDPayable"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PaymentRequest"
+      responses:
+        "201":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FinancialTitle"
+        "200":
+          description: Replayed result of an earlier request with the same Idempotency-Key.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FinancialTitle"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+  /api/v1/tenants/{tenantID}/accounts-payable/{payableID}/payments/{paymentID}/reverse:
+    post:
+      operationId: reversePayablePayment
+      tags: [finance]
+      summary: "Reverse a payment and reopen the balance"
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/TitleIDPayable"
+        - $ref: "#/components/parameters/PaymentID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReasonRequest"
+      responses:
+        "200":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FinancialTitle"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+  /api/v1/tenants/{tenantID}/accounts-payable/{payableID}/cancel:
+    post:
+      operationId: cancelPayable
+      tags: [finance]
+      summary: "Cancel an unpaid manual payable"
+      description: "Titles created by documents are cancelled through the document."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/TitleIDPayable"
+      responses:
+        "200":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FinancialTitle"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+  /api/v1/tenants/{tenantID}/accounts-receivable:
+    get:
+      operationId: listAccountsReceivable
+      tags: [finance]
+      summary: "Accounts receivable by due date"
+      description: "Requires `finance.read`."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/TitleStatus"
+        - $ref: "#/components/parameters/PartyFilter"
+        - $ref: "#/components/parameters/PayableInvoiceFilter"
+        - $ref: "#/components/parameters/OriginTypeFilter"
+        - $ref: "#/components/parameters/OriginIDFilter"
+        - $ref: "#/components/parameters/DueBefore"
+      responses:
+        "200":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FinancialTitleList"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+    post:
+      operationId: createAccountReceivable
+      tags: [finance]
+      summary: "Register a manual receivable"
+      description: "Requires `finance.manage`."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FinancialTitleRequest"
+      responses:
+        "201":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FinancialTitle"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+  /api/v1/tenants/{tenantID}/accounts-receivable/{receivableID}:
+    get:
+      operationId: getAccountReceivable
+      tags: [finance]
+      summary: "A receivable with its payments"
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/TitleIDReceivable"
+      responses:
+        "200":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FinancialTitle"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/tenants/{tenantID}/accounts-receivable/{receivableID}/payments:
+    post:
+      operationId: payReceivable
+      tags: [finance]
+      summary: "Settle a receivable (partial allowed)"
+      description: "Requires `finance.pay` and an `Idempotency-Key`. `amount` is the principal settled (cannot exceed the open balance); the money moved is amount + interest + fine - discount and is posted to the ledger."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/TitleIDReceivable"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PaymentRequest"
+      responses:
+        "201":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FinancialTitle"
+        "200":
+          description: Replayed result of an earlier request with the same Idempotency-Key.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FinancialTitle"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+  /api/v1/tenants/{tenantID}/accounts-receivable/{receivableID}/payments/{paymentID}/reverse:
+    post:
+      operationId: reverseReceivablePayment
+      tags: [finance]
+      summary: "Reverse a payment and reopen the balance"
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/TitleIDReceivable"
+        - $ref: "#/components/parameters/PaymentID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReasonRequest"
+      responses:
+        "200":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FinancialTitle"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+  /api/v1/tenants/{tenantID}/accounts-receivable/{receivableID}/cancel:
+    post:
+      operationId: cancelReceivable
+      tags: [finance]
+      summary: "Cancel an unpaid manual receivable"
+      description: "Titles created by documents are cancelled through the document."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/TitleIDReceivable"
+      responses:
+        "200":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FinancialTitle"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+  /api/v1/tenants/{tenantID}/finance/summary:
+    get:
+      operationId: getFinanceSummary
+      tags: [finance]
+      summary: "Balances per account and open/overdue titles"
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+      responses:
+        "200":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FinanceSummary"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
 
 components:
   securitySchemes:
@@ -3731,6 +4435,60 @@ components:
         type: integer
         minimum: 1
   parameters:
+    AccountID:
+      name: accountID
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    FinCategoryID:
+      name: categoryID
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    TransactionID:
+      name: transactionID
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    PaymentID:
+      name: paymentID
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    TitleIDPayable:
+      name: payableID
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    TitleIDReceivable:
+      name: receivableID
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    AccountFilter:
+      name: account_id
+      in: query
+      schema: { type: string, format: uuid }
+    OriginIDFilter:
+      name: origin_id
+      in: query
+      schema: { type: string, format: uuid }
+    FromDate:
+      name: from
+      in: query
+      schema: { type: string, format: date }
+    ToDate:
+      name: to
+      in: query
+      schema: { type: string, format: date }
+    TitleStatus:
+      name: status
+      in: query
+      schema: { type: string, enum: [open, partially_paid, paid, cancelled] }
+    OriginTypeFilter:
+      name: origin_type
+      in: query
+      schema: { type: string, enum: [manual, work_order, sale] }
     OrderID:
       name: orderID
       in: path
@@ -4129,6 +4887,241 @@ components:
           schema:
             $ref: "#/components/schemas/Error"
   schemas:
+    FinancialAccount:
+      type: object
+      additionalProperties: false
+      required: [id, name, account_kind, legal_entity_id, location_id, opening_balance, opening_date, balance, debit_fee_pct, credit_fee_pct, credit_installment_fee_pct, debit_settlement_days, credit_settlement_days, active, version]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        account_kind: { type: string, enum: [cash, bank, digital_wallet, card_acquirer] }
+        legal_entity_id: { type: [string, "null"], format: uuid }
+        location_id: { type: [string, "null"], format: uuid }
+        opening_balance: { type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
+        opening_date: { type: string, format: date }
+        balance: { type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
+        debit_fee_pct: { type: [string, "null"], pattern: "^[0-9]+(\\.[0-9]+)?$" }
+        credit_fee_pct: { type: [string, "null"], pattern: "^[0-9]+(\\.[0-9]+)?$" }
+        credit_installment_fee_pct: { type: [string, "null"], pattern: "^[0-9]+(\\.[0-9]+)?$" }
+        debit_settlement_days: { type: [integer, "null"] }
+        credit_settlement_days: { type: [integer, "null"] }
+        active: { type: boolean }
+        version: { type: integer }
+    FinancialAccountList:
+      type: object
+      additionalProperties: false
+      required: [items, next_cursor]
+      properties:
+        items: { type: array, items: { $ref: "#/components/schemas/FinancialAccount" } }
+        next_cursor: { $ref: "#/components/schemas/NextCursor" }
+    FinancialAccountRequest:
+      type: object
+      additionalProperties: false
+      required: [name, account_kind]
+      properties:
+        name: { type: string }
+        account_kind: { type: string, enum: [cash, bank, digital_wallet, card_acquirer] }
+        legal_entity_id: { type: [string, "null"], format: uuid }
+        location_id: { type: [string, "null"], format: uuid }
+        opening_balance: { type: [string, number] }
+        opening_date: { type: [string, "null"], format: date }
+        debit_fee_pct: { type: [string, number, "null"] }
+        credit_fee_pct: { type: [string, number, "null"] }
+        credit_installment_fee_pct: { type: [string, number, "null"] }
+        debit_settlement_days: { type: [integer, "null"] }
+        credit_settlement_days: { type: [integer, "null"] }
+    FinancialAccountPatchRequest:
+      type: object
+      additionalProperties: false
+      required: [version]
+      properties:
+        version: { type: integer, minimum: 1 }
+        name: { type: string }
+        legal_entity_id: { type: [string, "null"], format: uuid }
+        location_id: { type: [string, "null"], format: uuid }
+        debit_fee_pct: { type: [string, number, "null"] }
+        credit_fee_pct: { type: [string, number, "null"] }
+        credit_installment_fee_pct: { type: [string, number, "null"] }
+        debit_settlement_days: { type: [integer, "null"] }
+        credit_settlement_days: { type: [integer, "null"] }
+        active: { type: boolean }
+    FinancialCategory:
+      type: object
+      additionalProperties: false
+      required: [id, parent_id, name, direction, system_code, active]
+      properties:
+        id: { type: string, format: uuid }
+        parent_id: { type: [string, "null"], format: uuid }
+        name: { type: string }
+        direction: { type: string, enum: [income, expense] }
+        system_code: { type: [string, "null"] }
+        active: { type: boolean }
+    FinancialCategoryList:
+      type: object
+      additionalProperties: false
+      required: [items, next_cursor]
+      properties:
+        items: { type: array, items: { $ref: "#/components/schemas/FinancialCategory" } }
+        next_cursor: { $ref: "#/components/schemas/NextCursor" }
+    FinancialCategoryRequest:
+      type: object
+      additionalProperties: false
+      required: [name, direction]
+      properties:
+        name: { type: string }
+        direction: { type: string, enum: [income, expense] }
+        parent_id: { type: [string, "null"], format: uuid }
+    FinancialCategoryPatchRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        name: { type: string }
+        active: { type: boolean }
+    FinancialTransaction:
+      type: object
+      additionalProperties: false
+      required: [id, account_id, category_id, direction, amount, competence_date, cash_date, description, source_type, source_id, transfer_group_id, reverses_id, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        account_id: { type: string, format: uuid }
+        account_name: { type: string }
+        category_id: { type: [string, "null"], format: uuid }
+        category_name: { type: [string, "null"] }
+        direction: { type: string, enum: [in, out] }
+        amount: { type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
+        competence_date: { type: string, format: date }
+        cash_date: { type: string, format: date }
+        description: { type: string }
+        source_type: { type: string }
+        source_id: { type: [string, "null"], format: uuid }
+        transfer_group_id: { type: [string, "null"], format: uuid }
+        reverses_id: { type: [string, "null"], format: uuid }
+        created_at: { type: string, format: date-time }
+    FinancialTransactionList:
+      type: object
+      additionalProperties: false
+      required: [items, next_cursor]
+      properties:
+        items: { type: array, items: { $ref: "#/components/schemas/FinancialTransaction" } }
+        next_cursor: { $ref: "#/components/schemas/NextCursor" }
+    FinancialTransactionLegs:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items: { type: array, items: { $ref: "#/components/schemas/FinancialTransaction" } }
+    FinancialEntryRequest:
+      type: object
+      additionalProperties: false
+      required: [account_id, category_id, direction, amount, cash_date, description]
+      properties:
+        account_id: { type: string, format: uuid }
+        category_id: { type: string, format: uuid }
+        direction: { type: string, enum: [in, out] }
+        amount: { type: string }
+        competence_date: { type: string, format: date }
+        cash_date: { type: string, format: date }
+        description: { type: string }
+    FinancialTransferRequest:
+      type: object
+      additionalProperties: false
+      required: [from_account_id, to_account_id, amount, date]
+      properties:
+        from_account_id: { type: string, format: uuid }
+        to_account_id: { type: string, format: uuid }
+        amount: { type: string }
+        date: { type: string, format: date }
+        description: { type: string }
+    ReasonRequest:
+      type: object
+      additionalProperties: false
+      required: [reason]
+      properties:
+        reason: { type: string, minLength: 3, maxLength: 200 }
+    FinancialPayment:
+      type: object
+      additionalProperties: false
+      required: [id, account_id, amount, interest, fine, discount, paid_on, notes, transaction_id, reversed_at, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        account_id: { type: string, format: uuid }
+        amount: { type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
+        interest: { type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
+        fine: { type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
+        discount: { type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
+        paid_on: { type: string, format: date }
+        notes: { type: [string, "null"] }
+        transaction_id: { type: string, format: uuid }
+        reversed_at: { type: [string, "null"], format: date-time }
+        created_at: { type: string, format: date-time }
+    FinancialTitle:
+      type: object
+      additionalProperties: false
+      required: [id, location_id, legal_entity_id, category_id, party_id, party_name, origin_type, origin_id, installment_number, description, due_date, amount, paid_amount, open_amount, status, paid_at, cancelled_at, version, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        location_id: { type: string, format: uuid }
+        legal_entity_id: { type: [string, "null"], format: uuid }
+        category_id: { type: [string, "null"], format: uuid }
+        party_id: { type: [string, "null"], format: uuid }
+        party_name: { type: string }
+        supplier_invoice_id: { type: [string, "null"], format: uuid }
+        acquirer_account_id: { type: [string, "null"], format: uuid }
+        origin_type: { type: string }
+        origin_id: { type: [string, "null"], format: uuid }
+        installment_number: { type: integer }
+        description: { type: string }
+        due_date: { type: string, format: date }
+        amount: { type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
+        paid_amount: { type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
+        open_amount: { type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
+        status: { type: string, enum: [open, partially_paid, paid, cancelled] }
+        paid_at: { type: [string, "null"], format: date-time }
+        cancelled_at: { type: [string, "null"], format: date-time }
+        payments: { type: array, items: { $ref: "#/components/schemas/FinancialPayment" } }
+        version: { type: integer }
+        created_at: { type: string, format: date-time }
+    FinancialTitleList:
+      type: object
+      additionalProperties: false
+      required: [items, next_cursor]
+      properties:
+        items: { type: array, items: { $ref: "#/components/schemas/FinancialTitle" } }
+        next_cursor: { $ref: "#/components/schemas/NextCursor" }
+    FinancialTitleRequest:
+      type: object
+      additionalProperties: false
+      required: [location_id, party_id, description, due_date, amount]
+      properties:
+        location_id: { type: string, format: uuid }
+        legal_entity_id: { type: [string, "null"], format: uuid }
+        party_id: { type: string, format: uuid }
+        category_id: { type: [string, "null"], format: uuid }
+        description: { type: string }
+        due_date: { type: string, format: date }
+        amount: { type: [string, number] }
+    PaymentRequest:
+      type: object
+      additionalProperties: false
+      required: [account_id, amount, paid_on]
+      properties:
+        account_id: { type: string, format: uuid }
+        amount: { type: string }
+        interest: { type: string }
+        fine: { type: string }
+        discount: { type: string }
+        paid_on: { type: string, format: date }
+        notes: { type: [string, "null"] }
+    FinanceSummary:
+      type: object
+      additionalProperties: false
+      required: [accounts, receivable_open, receivable_overdue, payable_open, payable_overdue]
+      properties:
+        accounts: { type: array, items: { $ref: "#/components/schemas/FinancialAccount" } }
+        receivable_open: { type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
+        receivable_overdue: { type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
+        payable_open: { type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
+        payable_overdue: { type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
     PurchaseOrderItem:
       type: object
       additionalProperties: false
@@ -4293,28 +5286,6 @@ components:
       required: [reason]
       properties:
         reason: { type: string, minLength: 3, maxLength: 500 }
-    AccountPayable:
-      type: object
-      additionalProperties: false
-      required: [id, supplier_party_id, supplier_name, supplier_invoice_id, installment_number, description, due_date, amount, status, created_at]
-      properties:
-        id: { type: string, format: uuid }
-        supplier_party_id: { type: string, format: uuid }
-        supplier_name: { type: string }
-        supplier_invoice_id: { type: string, format: uuid }
-        installment_number: { type: integer }
-        description: { type: string }
-        due_date: { type: string, format: date }
-        amount: { type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
-        status: { type: string, enum: [open, paid, cancelled] }
-        created_at: { type: string, format: date-time }
-    AccountPayableList:
-      type: object
-      additionalProperties: false
-      required: [items, next_cursor]
-      properties:
-        items: { type: array, items: { $ref: "#/components/schemas/AccountPayable" } }
-        next_cursor: { $ref: "#/components/schemas/NextCursor" }
     ProductCategory:
       type: object
       additionalProperties: false
