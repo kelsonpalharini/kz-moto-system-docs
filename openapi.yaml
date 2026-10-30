@@ -1,0 +1,4357 @@
+openapi: 3.1.0
+info:
+  title: KZ Moto System API
+  version: 0.4.0
+  summary: Multi-tenant management API for automotive repair shops.
+  description: |
+    REST API consumed directly by the web frontend (no BFF).
+
+    Conventions:
+    - Business endpoints live under `/api/v1`; operational probes live at the root.
+    - JSON UTF-8 bodies, ISO 8601 timestamps in UTC, UUID identifiers, snake_case fields.
+    - Every response carries `X-Request-ID`; clients may send a well-formed one to correlate retries.
+    - Errors always use the `Error` envelope and never expose SQL, stack traces, or secrets.
+    - Lists return `{items, next_cursor}`; pass `next_cursor` back as `?cursor=` for the next page.
+
+    Authentication:
+    - `POST /api/v1/auth/login` returns an opaque access token (15 minutes) and a refresh token.
+    - Send `Authorization: Bearer <access_token>` on protected endpoints.
+    - `POST /api/v1/auth/refresh` rotates both tokens. Each refresh token works once: reusing one
+      revokes the whole session, so clients must serialize refreshes.
+    - Keep tokens in memory (and at most `sessionStorage`); never in `localStorage`.
+
+    Tenancy:
+    - Tenants are provisioned by platform administrators; owners join through an invitation.
+    - `{tenantID}` in a path only selects a tenant. The server verifies an active membership and
+      the required permission on every request; non-members receive 404.
+servers:
+  - url: http://localhost:8080
+    description: Local development
+security: []
+tags:
+  - name: operations
+    description: Liveness and readiness probes for orchestrators and load balancers.
+  - name: auth
+    description: Login, sessions, and passwords.
+  - name: tenants
+    description: Tenants the caller belongs to, members, roles, and audit log.
+  - name: invitations
+    description: Inviting people to a tenant and accepting invitations.
+  - name: platform
+    description: Platform administration (tenant provisioning). Platform administrators only.
+  - name: organization
+    description: Legal entities (CNPJ), locations, and per-location access.
+  - name: customers
+    description: Customers (people and companies).
+  - name: suppliers
+    description: Suppliers.
+  - name: parties
+    description: Contacts and addresses shared by customers and suppliers.
+  - name: vehicles
+    description: Vehicles, plate history, and owners/drivers.
+  - name: vehicle-catalog
+    description: Global make/model/variant catalogue (read-only for tenants).
+  - name: appointments
+    description: Per-location schedule with capacity control.
+  - name: inspections
+    description: Versioned checklists and vehicle inspections.
+  - name: work-orders
+    description: Work orders and estimates, approvals, technicians and labor.
+  - name: public
+    description: Customer-facing endpoints without login (approval links).
+paths:
+  /healthz:
+    get:
+      operationId: getLiveness
+      tags: [operations]
+      summary: Liveness probe
+      description: Reports that the process is running. Dependencies are not checked.
+      responses:
+        "200":
+          description: The process is alive.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LivenessStatus"
+  /readyz:
+    get:
+      operationId: getReadiness
+      tags: [operations]
+      summary: Readiness probe
+      description: Reports whether the process can serve traffic. Checks the database within a short timeout.
+      responses:
+        "200":
+          description: The process is ready to serve traffic.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReadinessStatus"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
+  /api/v1/auth/login:
+    post:
+      operationId: login
+      tags: [auth]
+      summary: Log in with e-mail and password
+      description: |
+        Unknown e-mails, wrong passwords, disabled and temporarily locked accounts all return the
+        same `invalid_credentials` error. Ten consecutive failures lock the account for 15 minutes.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+      responses:
+        "200":
+          $ref: "#/components/responses/Tokens"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+  /api/v1/auth/refresh:
+    post:
+      operationId: refreshTokens
+      tags: [auth]
+      summary: Rotate the access and refresh tokens
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RefreshRequest"
+      responses:
+        "200":
+          $ref: "#/components/responses/Tokens"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+  /api/v1/auth/logout:
+    post:
+      operationId: logout
+      tags: [auth]
+      summary: End the current session
+      security: [{ bearerAuth: [] }]
+      responses:
+        "204": { $ref: "#/components/responses/NoContent" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /api/v1/auth/logout-all:
+    post:
+      operationId: logoutAll
+      tags: [auth]
+      summary: End every session of the caller, including the current one
+      security: [{ bearerAuth: [] }]
+      responses:
+        "204": { $ref: "#/components/responses/NoContent" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /api/v1/auth/password/forgot:
+    post:
+      operationId: requestPasswordReset
+      tags: [auth]
+      summary: E-mail a password reset link
+      description: Always answers 202, whether or not the address has an account.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ForgotPasswordRequest"
+      responses:
+        "202":
+          description: Accepted. If the address has an active account, a link valid for one hour was sent.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+  /api/v1/auth/password/reset:
+    post:
+      operationId: resetPassword
+      tags: [auth]
+      summary: Choose a new password with a reset token
+      description: Signs out every session of the account.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ResetPasswordRequest"
+      responses:
+        "204": { $ref: "#/components/responses/NoContent" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+  /api/v1/auth/password/change:
+    post:
+      operationId: changePassword
+      tags: [auth]
+      summary: Change the caller's password
+      description: Signs out every other session.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChangePasswordRequest"
+      responses:
+        "204": { $ref: "#/components/responses/NoContent" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+  /api/v1/auth/me:
+    get:
+      operationId: getMe
+      tags: [auth]
+      summary: The authenticated user
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: The caller's account.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /api/v1/auth/sessions:
+    get:
+      operationId: listSessions
+      tags: [auth]
+      summary: The caller's active sessions
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: Active sessions, most recently used first.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SessionList"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /api/v1/auth/sessions/{sessionID}:
+    delete:
+      operationId: revokeSession
+      tags: [auth]
+      summary: End one of the caller's sessions
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/SessionID"
+      responses:
+        "204": { $ref: "#/components/responses/NoContent" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/tenants:
+    get:
+      operationId: listMyTenants
+      tags: [tenants]
+      summary: Tenants where the caller has an active membership
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: The caller's tenants, by name.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserTenantList"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /api/v1/tenants/{tenantID}:
+    parameters:
+      - $ref: "#/components/parameters/TenantID"
+    get:
+      operationId: getTenant
+      tags: [tenants]
+      summary: A tenant the caller belongs to
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200": { $ref: "#/components/responses/Tenant" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    patch:
+      operationId: updateTenant
+      tags: [tenants]
+      summary: Change the tenant name or time zone
+      description: "Requires `tenant.manage`."
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateTenantRequest"
+      responses:
+        "200": { $ref: "#/components/responses/Tenant" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+  /api/v1/tenants/{tenantID}/members:
+    get:
+      operationId: listMembers
+      tags: [tenants]
+      summary: Members of the tenant
+      description: "Requires `users.read`. Removed members are omitted."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: A page of members ordered by join date.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MemberList"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+  /api/v1/tenants/{tenantID}/members/{membershipID}:
+    patch:
+      operationId: updateMemberStatus
+      tags: [tenants]
+      summary: Suspend, reactivate or remove a member
+      description: |
+        Requires `users.disable` and every permission the member holds. The tenant must keep at
+        least one active owner (`409 last_owner`). Removing returns 204.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/MembershipID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateMemberRequest"
+      responses:
+        "200": { $ref: "#/components/responses/Member" }
+        "204": { $ref: "#/components/responses/NoContent" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+  /api/v1/tenants/{tenantID}/members/{membershipID}/roles:
+    put:
+      operationId: replaceMemberRoles
+      tags: [tenants]
+      summary: Replace a member's roles
+      description: |
+        Requires `users.update` and every permission of the member's current and new roles. The
+        tenant must keep at least one active owner (`409 last_owner`).
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/MembershipID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReplaceRolesRequest"
+      responses:
+        "200": { $ref: "#/components/responses/Member" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+  /api/v1/tenants/{tenantID}/roles:
+    get:
+      operationId: listRoles
+      tags: [tenants]
+      summary: Roles of the tenant and their permissions
+      description: "Requires `users.read`."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+      responses:
+        "200":
+          description: The tenant's roles.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RoleList"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/tenants/{tenantID}/invitations:
+    parameters:
+      - $ref: "#/components/parameters/TenantID"
+    get:
+      operationId: listInvitations
+      tags: [invitations]
+      summary: Pending invitations of the tenant
+      description: "Requires `users.read`."
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: Pending invitations, newest first.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InvitationList"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    post:
+      operationId: createInvitation
+      tags: [invitations]
+      summary: Invite someone to the tenant
+      description: |
+        Requires `users.invite` and every permission of the role. Replaces a pending invitation
+        for the same address. The invitee receives a link valid for 7 days.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/InviteRequest"
+      responses:
+        "201": { $ref: "#/components/responses/Invitation" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+  /api/v1/tenants/{tenantID}/invitations/{invitationID}:
+    delete:
+      operationId: revokeInvitation
+      tags: [invitations]
+      summary: Revoke a pending invitation
+      description: "Requires `users.invite`."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/InvitationID"
+      responses:
+        "204": { $ref: "#/components/responses/NoContent" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/tenants/{tenantID}/audit-logs:
+    get:
+      operationId: listAuditLogs
+      tags: [tenants]
+      summary: The tenant's audit log
+      description: "Requires `audit.read`."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: A page of audit entries, newest first.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuditLogList"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+
+  /api/v1/invitations/inspect:
+    post:
+      operationId: inspectInvitation
+      tags: [invitations]
+      summary: Check an invitation link before accepting it
+      description: Tells the invitee which tenant invited them and whether they must log in first.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/InvitationLink"
+      responses:
+        "200":
+          description: The invitation is valid.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InvitationPreview"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "410": { $ref: "#/components/responses/Gone" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+  /api/v1/invitations/accept:
+    post:
+      operationId: acceptInvitation
+      tags: [invitations]
+      summary: Accept an invitation
+      description: |
+        With a bearer token, the caller's e-mail must match the invitation and the response is 200.
+        Without one, `full_name` and `password` create the account (the link proves ownership of
+        the address) and the response is 201 with tokens for the new session. If an account
+        already exists for the address, the response is `401 login_required`.
+      security: [{}, { bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AcceptInvitationRequest"
+      responses:
+        "200": { $ref: "#/components/responses/InvitationAccepted" }
+        "201": { $ref: "#/components/responses/InvitationAccepted" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "410": { $ref: "#/components/responses/Gone" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+
+  /api/v1/platform/tenants:
+    get:
+      operationId: platformListTenants
+      tags: [platform]
+      summary: Every tenant, newest first
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: A page of tenants.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TenantList"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+    post:
+      operationId: platformCreateTenant
+      tags: [platform]
+      summary: Provision a tenant and invite its owner
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateTenantRequest"
+      responses:
+        "201":
+          description: The tenant was created and the owner invitation sent.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreateTenantResponse"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+  /api/v1/platform/tenants/{tenantID}:
+    patch:
+      operationId: platformUpdateTenant
+      tags: [platform]
+      summary: Suspend, reactivate or close a tenant
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PlatformUpdateTenantRequest"
+      responses:
+        "200": { $ref: "#/components/responses/Tenant" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+
+  /api/v1/tenants/{tenantID}/legal-entities:
+    get:
+      operationId: listLegalEntities
+      tags: [organization]
+      summary: Legal entities (CNPJs) of the tenant
+      description: "Requires `organization.read`."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LegalEntityList"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+    post:
+      operationId: createLegalEntity
+      tags: [organization]
+      summary: Register a CNPJ
+      description: "Requires `organization.manage`. Numeric and alphanumeric CNPJs are accepted."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateLegalEntityRequest"
+      responses:
+        "201":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LegalEntity"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+  /api/v1/tenants/{tenantID}/legal-entities/{legalEntityID}:
+    get:
+      operationId: getLegalEntity
+      tags: [organization]
+      summary: A legal entity
+      description: "Requires `organization.read`."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/LegalEntityID"
+      responses:
+        "200":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LegalEntity"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    patch:
+      operationId: updateLegalEntity
+      tags: [organization]
+      summary: Update a legal entity
+      description: "Requires `organization.manage`. Send the current `version`; a stale version returns `409 version_conflict`."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/LegalEntityID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateLegalEntityRequest"
+      responses:
+        "200":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LegalEntity"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+  /api/v1/tenants/{tenantID}/locations:
+    get:
+      operationId: listLocations
+      tags: [organization]
+      summary: Locations the caller can access
+      description: "Requires `organization.read`. Without `locations.access_all` only assigned locations are listed."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LocationList"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+    post:
+      operationId: createLocation
+      tags: [organization]
+      summary: Create a location
+      description: "Requires `organization.manage`."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateLocationRequest"
+      responses:
+        "201":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Location"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+  /api/v1/tenants/{tenantID}/locations/{locationID}:
+    get:
+      operationId: getLocation
+      tags: [organization]
+      summary: A location the caller can access
+      description: "Requires `organization.read`."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/LocationID"
+      responses:
+        "200":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Location"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    patch:
+      operationId: updateLocation
+      tags: [organization]
+      summary: Update a location
+      description: "Requires `organization.manage`. Send the current `version`."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/LocationID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateLocationRequest"
+      responses:
+        "200":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Location"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+  /api/v1/tenants/{tenantID}/members/{membershipID}/locations:
+    get:
+      operationId: getMemberLocations
+      tags: [organization]
+      summary: A member's assigned locations
+      description: "Requires `users.read`."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/MembershipID"
+      responses:
+        "200":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MemberLocations"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    put:
+      operationId: setMemberLocations
+      tags: [organization]
+      summary: Replace a member's assigned locations
+      description: "Requires `users.update`. Members holding `locations.access_all` reach every location regardless."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/MembershipID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MemberLocations"
+      responses:
+        "200":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MemberLocations"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+  /api/v1/tenants/{tenantID}/customers:
+    get:
+      operationId: listCustomers
+      tags: [customers]
+      summary: Customers
+      description: "Requires `customers.read`. `q` matches the name, CPF/CNPJ (exact) or phone."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/Query"
+        - $ref: "#/components/parameters/PartyStatus"
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PartyList"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+    post:
+      operationId: createCustomer
+      tags: [customers]
+      summary: Create a customer (or add the profile to an existing party)
+      description: "Requires `customers.create`. A CPF/CNPJ already registered returns `409 document_taken` with the existing party ID."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreatePartyRequest"
+      responses:
+        "201":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Party"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+  /api/v1/tenants/{tenantID}/customers/{partyID}:
+    get:
+      operationId: getCustomer
+      tags: [customers]
+      summary: A customer
+      description: "Requires `customers.read`."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/PartyID"
+      responses:
+        "200":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Party"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    patch:
+      operationId: updateCustomer
+      tags: [customers]
+      summary: Update a customer
+      description: "Requires `customers.update` (and the write permission of the party's other profiles). Send the current `version`."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/PartyID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdatePartyRequest"
+      responses:
+        "200":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Party"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+  /api/v1/tenants/{tenantID}/suppliers:
+    get:
+      operationId: listSuppliers
+      tags: [suppliers]
+      summary: Suppliers
+      description: "Requires `suppliers.read`. `q` matches the name, CPF/CNPJ (exact) or phone."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/Query"
+        - $ref: "#/components/parameters/PartyStatus"
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PartyList"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+    post:
+      operationId: createSupplier
+      tags: [suppliers]
+      summary: Create a supplier (or add the profile to an existing party)
+      description: "Requires `suppliers.manage`. A CPF/CNPJ already registered returns `409 document_taken` with the existing party ID."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreatePartyRequest"
+      responses:
+        "201":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Party"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+  /api/v1/tenants/{tenantID}/suppliers/{partyID}:
+    get:
+      operationId: getSupplier
+      tags: [suppliers]
+      summary: A supplier
+      description: "Requires `suppliers.read`."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/PartyID"
+      responses:
+        "200":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Party"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    patch:
+      operationId: updateSupplier
+      tags: [suppliers]
+      summary: Update a supplier
+      description: "Requires `suppliers.manage` (and the write permission of the party's other profiles). Send the current `version`."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/PartyID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdatePartyRequest"
+      responses:
+        "200":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Party"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+  /api/v1/tenants/{tenantID}/parties/{partyID}/contacts:
+    get:
+      operationId: listPartyContacts
+      tags: [parties]
+      summary: Contacts of a party
+      description: "Requires read permission for one of the party's profiles."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/PartyID"
+        - $ref: "#/components/parameters/IncludeArchived"
+      responses:
+        "200":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ContactList"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    post:
+      operationId: addPartyContact
+      tags: [parties]
+      summary: Add a contact
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/PartyID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ContactRequest"
+      responses:
+        "201":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Contact"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+  /api/v1/tenants/{tenantID}/parties/{partyID}/contacts/{contactID}:
+    patch:
+      operationId: updatePartyContact
+      tags: [parties]
+      summary: Update or archive a contact
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/PartyID"
+        - $ref: "#/components/parameters/ContactID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ContactPatchRequest"
+      responses:
+        "200":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Contact"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+  /api/v1/tenants/{tenantID}/parties/{partyID}/addresses:
+    get:
+      operationId: listPartyAddresses
+      tags: [parties]
+      summary: Addresses of a party
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/PartyID"
+        - $ref: "#/components/parameters/IncludeArchived"
+      responses:
+        "200":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PartyAddressList"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    post:
+      operationId: addPartyAddress
+      tags: [parties]
+      summary: Add an address
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/PartyID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PartyAddressRequest"
+      responses:
+        "201":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PartyAddress"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+  /api/v1/tenants/{tenantID}/parties/{partyID}/addresses/{addressID}:
+    patch:
+      operationId: updatePartyAddress
+      tags: [parties]
+      summary: Update or archive an address
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/PartyID"
+        - $ref: "#/components/parameters/AddressID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PartyAddressPatchRequest"
+      responses:
+        "200":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PartyAddress"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+  /api/v1/tenants/{tenantID}/vehicles:
+    get:
+      operationId: listVehicles
+      tags: [vehicles]
+      summary: Vehicles
+      description: "Requires `vehicles.read`. `q` matches the plate (prefix), chassis (prefix), RENAVAM or the owner name."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/Query"
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VehicleList"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+    post:
+      operationId: createVehicle
+      tags: [vehicles]
+      summary: Register a vehicle
+      description: "Requires `vehicles.create`."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateVehicleRequest"
+      responses:
+        "201":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Vehicle"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+  /api/v1/tenants/{tenantID}/vehicles/{vehicleID}:
+    get:
+      operationId: getVehicle
+      tags: [vehicles]
+      summary: A vehicle
+      description: "Requires `vehicles.read`."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/VehicleID"
+      responses:
+        "200":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Vehicle"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    patch:
+      operationId: updateVehicle
+      tags: [vehicles]
+      summary: Update a vehicle
+      description: "Requires `vehicles.update`. Send the current `version`."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/VehicleID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateVehicleRequest"
+      responses:
+        "200":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Vehicle"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+  /api/v1/tenants/{tenantID}/vehicles/{vehicleID}/plates:
+    get:
+      operationId: listVehiclePlates
+      tags: [vehicles]
+      summary: Plate history
+      description: "Requires `vehicles.read`."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/VehicleID"
+      responses:
+        "200":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PlateList"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    post:
+      operationId: changeVehiclePlate
+      tags: [vehicles]
+      summary: Assign a new current plate
+      description: "Requires `vehicles.update`. Closes the previous plate."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/VehicleID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PlateRequest"
+      responses:
+        "201":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Plate"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+  /api/v1/tenants/{tenantID}/vehicles/{vehicleID}/ownerships:
+    get:
+      operationId: listVehicleOwnerships
+      tags: [vehicles]
+      summary: Owner/driver history
+      description: "Requires `vehicles.read`."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/VehicleID"
+      responses:
+        "200":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OwnershipList"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    post:
+      operationId: linkVehicleParty
+      tags: [vehicles]
+      summary: Record an owner, lessee, driver or fleet manager
+      description: "Requires `vehicles.update`. A new owner closes the previous owner period."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/VehicleID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OwnershipRequest"
+      responses:
+        "201":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OwnershipList"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+  /api/v1/tenants/{tenantID}/customers/{partyID}/vehicles:
+    get:
+      operationId: listCustomerVehicles
+      tags: [vehicles]
+      summary: Vehicles currently related to a customer
+      description: "Requires `customers.read` and `vehicles.read`."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/PartyID"
+        - $ref: "#/components/parameters/Query"
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VehicleList"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+  /api/v1/vehicle-catalog/makes:
+    get:
+      operationId: listVehicleMakes
+      tags: [vehicle-catalog]
+      summary: Catalogue makes
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/VehicleType"
+        - $ref: "#/components/parameters/IncludeArchived"
+      responses:
+        "200":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VehicleMakeList"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+  /api/v1/vehicle-catalog/makes/{makeID}/models:
+    get:
+      operationId: listVehicleModels
+      tags: [vehicle-catalog]
+      summary: Models of a make
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/MakeID"
+        - $ref: "#/components/parameters/VehicleType"
+        - $ref: "#/components/parameters/IncludeArchived"
+      responses:
+        "200":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VehicleModelList"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+  /api/v1/vehicle-catalog/models/{modelID}/variants:
+    get:
+      operationId: listVehicleVariants
+      tags: [vehicle-catalog]
+      summary: Variants of a model
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/ModelID"
+        - $ref: "#/components/parameters/IncludeArchived"
+      responses:
+        "200":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VehicleVariantList"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+  /api/v1/platform/vehicle-catalog/makes:
+    post:
+      operationId: platformCreateVehicleMake
+      tags: [platform]
+      summary: Add a make
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VehicleMakeRequest"
+      responses:
+        "201":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VehicleMake"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+  /api/v1/platform/vehicle-catalog/makes/{makeID}:
+    patch:
+      operationId: platformUpdateVehicleMake
+      tags: [platform]
+      summary: Update or deactivate a make
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/MakeID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VehicleMakeRequest"
+      responses:
+        "200":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VehicleMake"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+  /api/v1/platform/vehicle-catalog/makes/{makeID}/models:
+    post:
+      operationId: platformCreateVehicleModel
+      tags: [platform]
+      summary: Add a model
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/MakeID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VehicleModelRequest"
+      responses:
+        "201":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VehicleModel"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+  /api/v1/platform/vehicle-catalog/models/{modelID}:
+    patch:
+      operationId: platformUpdateVehicleModel
+      tags: [platform]
+      summary: Rename or deactivate a model
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/ModelID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VehicleModelRequest"
+      responses:
+        "200":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VehicleModel"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+  /api/v1/platform/vehicle-catalog/models/{modelID}/variants:
+    post:
+      operationId: platformCreateVehicleVariant
+      tags: [platform]
+      summary: Add a variant
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/ModelID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VehicleVariantRequest"
+      responses:
+        "201":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VehicleVariant"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+  /api/v1/platform/vehicle-catalog/variants/{variantID}:
+    patch:
+      operationId: platformUpdateVehicleVariant
+      tags: [platform]
+      summary: Update or deactivate a variant
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/VariantID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VehicleVariantRequest"
+      responses:
+        "200":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VehicleVariant"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+
+  /api/v1/tenants/{tenantID}/appointments:
+    get:
+      operationId: listAppointments
+      tags: [appointments]
+      summary: Appointments overlapping a period
+      description: "Requires `appointments.read`. Period of at most 62 days; only accessible locations."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/From"
+        - $ref: "#/components/parameters/To"
+        - $ref: "#/components/parameters/LocationFilter"
+        - $ref: "#/components/parameters/AppointmentStatus"
+      responses:
+        "200":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AppointmentList"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+    post:
+      operationId: createAppointment
+      tags: [appointments]
+      summary: Schedule an appointment
+      description: "Requires `appointments.manage`. Returns `409 capacity_exceeded` when the location is full in the period."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateAppointmentRequest"
+      responses:
+        "201":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Appointment"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+  /api/v1/tenants/{tenantID}/appointments/{appointmentID}:
+    get:
+      operationId: getAppointment
+      tags: [appointments]
+      summary: An appointment
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/AppointmentID"
+      responses:
+        "200":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Appointment"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    patch:
+      operationId: updateAppointment
+      tags: [appointments]
+      summary: Update or reschedule an appointment
+      description: "Send the current `version`."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/AppointmentID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateAppointmentRequest"
+      responses:
+        "200":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Appointment"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+  /api/v1/tenants/{tenantID}/appointments/{appointmentID}/status:
+    post:
+      operationId: changeAppointmentStatus
+      tags: [appointments]
+      summary: Confirm, check in, complete, cancel or mark no-show
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/AppointmentID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StatusChangeRequest"
+      responses:
+        "200":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Appointment"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+  /api/v1/tenants/{tenantID}/inspection-templates:
+    get:
+      operationId: listInspectionTemplates
+      tags: [inspections]
+      summary: Checklist versions
+      description: "Requires `workorders.read`."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/IncludeArchived"
+      responses:
+        "200":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InspectionTemplateList"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+    post:
+      operationId: createInspectionTemplate
+      tags: [inspections]
+      summary: Create a checklist (draft version 1)
+      description: "Requires `settings.manage`."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/InspectionTemplateRequest"
+      responses:
+        "201":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InspectionTemplate"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+  /api/v1/tenants/{tenantID}/inspection-templates/{templateID}:
+    get:
+      operationId: getInspectionTemplate
+      tags: [inspections]
+      summary: A checklist version with items
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/TemplateID"
+      responses:
+        "200":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InspectionTemplate"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    put:
+      operationId: updateInspectionTemplate
+      tags: [inspections]
+      summary: Replace a draft checklist
+      description: "Only drafts can change."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/TemplateID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/InspectionTemplateRequest"
+      responses:
+        "200":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InspectionTemplate"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+  /api/v1/tenants/{tenantID}/inspection-templates/{templateID}/publish:
+    post:
+      operationId: publishInspectionTemplate
+      tags: [inspections]
+      summary: Publish a draft (archives the previous version)
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/TemplateID"
+      responses:
+        "200":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InspectionTemplate"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+  /api/v1/tenants/{tenantID}/inspection-templates/{templateID}/new-version:
+    post:
+      operationId: newInspectionTemplateVersion
+      tags: [inspections]
+      summary: Start a new draft version from this one
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/TemplateID"
+      responses:
+        "201":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InspectionTemplate"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+  /api/v1/tenants/{tenantID}/inspections:
+    get:
+      operationId: listInspections
+      tags: [inspections]
+      summary: Recent inspections
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/VehicleFilter"
+        - $ref: "#/components/parameters/WorkOrderFilter"
+      responses:
+        "200":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InspectionList"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+    post:
+      operationId: startInspection
+      tags: [inspections]
+      summary: Start an inspection with a published checklist
+      description: "Requires `workorders.update`."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StartInspectionRequest"
+      responses:
+        "201":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Inspection"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+  /api/v1/tenants/{tenantID}/inspections/{inspectionID}:
+    get:
+      operationId: getInspection
+      tags: [inspections]
+      summary: An inspection with answers
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/InspectionID"
+      responses:
+        "200":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Inspection"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/tenants/{tenantID}/inspections/{inspectionID}/results:
+    put:
+      operationId: saveInspectionResults
+      tags: [inspections]
+      summary: Save answers (repeatable until completed)
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/InspectionID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/InspectionResultsRequest"
+      responses:
+        "200":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Inspection"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+  /api/v1/tenants/{tenantID}/inspections/{inspectionID}/complete:
+    post:
+      operationId: completeInspection
+      tags: [inspections]
+      summary: Complete an inspection
+      description: "Every required item must be answered."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/InspectionID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CompleteInspectionRequest"
+      responses:
+        "200":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Inspection"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+  /api/v1/tenants/{tenantID}/work-orders:
+    get:
+      operationId: listWorkOrders
+      tags: [work-orders]
+      summary: Work orders
+      description: "Requires `workorders.read`. `q` matches the code, plate prefix or customer name."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/LocationFilter"
+        - $ref: "#/components/parameters/WorkOrderStatus"
+        - $ref: "#/components/parameters/VehicleFilter"
+        - $ref: "#/components/parameters/PartyFilter"
+        - $ref: "#/components/parameters/Query"
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkOrderList"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+    post:
+      operationId: createWorkOrder
+      tags: [work-orders]
+      summary: Open a work order (draft estimate)
+      description: "Requires `workorders.create`. Numbered per location (e.g. SP01-000123). With `appointment_id` the appointment is completed."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateWorkOrderRequest"
+      responses:
+        "201":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkOrder"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+  /api/v1/tenants/{tenantID}/work-orders/{workOrderID}:
+    get:
+      operationId: getWorkOrder
+      tags: [work-orders]
+      summary: A work order with items and technicians
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/WorkOrderID"
+      responses:
+        "200":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkOrder"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    patch:
+      operationId: updateWorkOrder
+      tags: [work-orders]
+      summary: Update the work order header
+      description: "Send the current `version`."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/WorkOrderID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateWorkOrderRequest"
+      responses:
+        "200":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkOrder"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+  /api/v1/tenants/{tenantID}/work-orders/{workOrderID}/items:
+    post:
+      operationId: addWorkOrderItem
+      tags: [work-orders]
+      summary: Add a proposed item
+      description: "Money and quantities are decimal strings. New items always need customer approval."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/WorkOrderID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WorkOrderItemRequest"
+      responses:
+        "201":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkOrder"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+  /api/v1/tenants/{tenantID}/work-orders/{workOrderID}/items/{itemID}:
+    patch:
+      operationId: updateWorkOrderItem
+      tags: [work-orders]
+      summary: Edit or cancel a proposed item, or mark an approved item done
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/WorkOrderID"
+        - $ref: "#/components/parameters/ItemID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WorkOrderItemPatchRequest"
+      responses:
+        "200":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkOrder"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+  /api/v1/tenants/{tenantID}/work-orders/{workOrderID}/status:
+    post:
+      operationId: changeWorkOrderStatus
+      tags: [work-orders]
+      summary: Change the work order status
+      description: "draft -> awaiting_approval -> (approval) -> approved -> in_progress <-> waiting_parts -> completed -> delivered. Delivering and cancelling started work need `workorders.close`."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/WorkOrderID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StatusChangeRequest"
+      responses:
+        "200":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkOrder"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+  /api/v1/tenants/{tenantID}/work-orders/{workOrderID}/history:
+    get:
+      operationId: listWorkOrderHistory
+      tags: [work-orders]
+      summary: Status history
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/WorkOrderID"
+      responses:
+        "200":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkOrderHistoryList"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/tenants/{tenantID}/work-orders/{workOrderID}/approvals:
+    get:
+      operationId: listWorkOrderApprovals
+      tags: [work-orders]
+      summary: Recorded approvals
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/WorkOrderID"
+      responses:
+        "200":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkOrderApprovalList"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    post:
+      operationId: recordWorkOrderApproval
+      tags: [work-orders]
+      summary: Record the customer decision given to staff
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/WorkOrderID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WorkOrderApprovalRequest"
+      responses:
+        "201":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkOrder"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+  /api/v1/tenants/{tenantID}/work-orders/{workOrderID}/approval-links:
+    post:
+      operationId: createWorkOrderApprovalLink
+      tags: [work-orders]
+      summary: Issue a single-use approval link for the customer
+      description: "Valid for 7 days; revoked by any later change to the work order."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/WorkOrderID"
+      responses:
+        "201":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApprovalLink"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+  /api/v1/tenants/{tenantID}/work-orders/{workOrderID}/technicians:
+    put:
+      operationId: setWorkOrderTechnicians
+      tags: [work-orders]
+      summary: Replace assigned technicians
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/WorkOrderID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TechniciansRequest"
+      responses:
+        "200":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkOrder"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+  /api/v1/tenants/{tenantID}/work-orders/{workOrderID}/labor-entries:
+    get:
+      operationId: listWorkOrderLabor
+      tags: [work-orders]
+      summary: Time entries
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/WorkOrderID"
+      responses:
+        "200":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LaborEntryList"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    post:
+      operationId: addWorkOrderLabor
+      tags: [work-orders]
+      summary: Record worked time
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/WorkOrderID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LaborEntryRequest"
+      responses:
+        "201":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LaborEntry"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+  /api/v1/public/work-order-approvals/inspect:
+    post:
+      operationId: inspectWorkOrderApproval
+      tags: [public]
+      summary: Customer view of an estimate behind an approval link
+      description: "No login. The link fragment carries tenant_id and token."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ApprovalLinkRequest"
+      responses:
+        "200":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PublicWorkOrder"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "410": { $ref: "#/components/responses/Gone" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+  /api/v1/public/work-order-approvals/decide:
+    post:
+      operationId: decideWorkOrderApproval
+      tags: [public]
+      summary: Customer approves or declines items through the link
+      description: "Consumes the link."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ApprovalLinkDecisionRequest"
+      responses:
+        "204": { $ref: "#/components/responses/NoContent" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "410": { $ref: "#/components/responses/Gone" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: Opaque access token (`kzat_…`) returned by login or refresh. Valid for 15 minutes.
+  headers:
+    RequestID:
+      description: Request correlation ID, generated by the server unless the client sent a well-formed one.
+      schema:
+        type: string
+        pattern: "^[A-Za-z0-9._-]{8,64}$"
+    RetryAfter:
+      description: Seconds to wait before retrying.
+      schema:
+        type: integer
+        minimum: 1
+  parameters:
+    AppointmentID:
+      name: appointmentID
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    TemplateID:
+      name: templateID
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    InspectionID:
+      name: inspectionID
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    WorkOrderID:
+      name: workOrderID
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    ItemID:
+      name: itemID
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    LocationFilter:
+      name: location_id
+      in: query
+      description: Only this location.
+      schema: { type: string, format: uuid }
+    VehicleFilter:
+      name: vehicle_id
+      in: query
+      description: Only this vehicle.
+      schema: { type: string, format: uuid }
+    WorkOrderFilter:
+      name: work_order_id
+      in: query
+      description: Only this work order.
+      schema: { type: string, format: uuid }
+    PartyFilter:
+      name: party_id
+      in: query
+      description: Only this customer.
+      schema: { type: string, format: uuid }
+    From:
+      name: from
+      in: query
+      required: true
+      schema: { type: string, format: date-time }
+    To:
+      name: to
+      in: query
+      required: true
+      schema: { type: string, format: date-time }
+    AppointmentStatus:
+      name: status
+      in: query
+      schema: { type: string, enum: [scheduled, confirmed, checked_in, completed, no_show, cancelled] }
+    WorkOrderStatus:
+      name: status
+      in: query
+      schema: { type: string, enum: [draft, awaiting_approval, approved, in_progress, waiting_parts, completed, delivered, cancelled] }
+    LegalEntityID:
+      name: legalEntityID
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    LocationID:
+      name: locationID
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    PartyID:
+      name: partyID
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    ContactID:
+      name: contactID
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    AddressID:
+      name: addressID
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    VehicleID:
+      name: vehicleID
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    MakeID:
+      name: makeID
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    ModelID:
+      name: modelID
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    VariantID:
+      name: variantID
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    Query:
+      name: q
+      in: query
+      description: Search text.
+      schema: { type: string, maxLength: 100 }
+    PartyStatus:
+      name: status
+      in: query
+      schema: { type: string, enum: [active, inactive, blocked] }
+    IncludeArchived:
+      name: include_archived
+      in: query
+      description: Include archived or inactive entries.
+      schema: { type: boolean }
+    VehicleType:
+      name: vehicle_type
+      in: query
+      schema: { $ref: "#/components/schemas/VehicleType" }
+    TenantID:
+      name: tenantID
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    MembershipID:
+      name: membershipID
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    InvitationID:
+      name: invitationID
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    SessionID:
+      name: sessionID
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    Limit:
+      name: limit
+      in: query
+      description: Page size.
+      schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+    Cursor:
+      name: cursor
+      in: query
+      description: Opaque cursor from a previous page's `next_cursor`.
+      schema: { type: string, maxLength: 200 }
+  responses:
+    NoContent:
+      description: Done.
+      headers:
+        X-Request-ID:
+          $ref: "#/components/headers/RequestID"
+    Tokens:
+      description: A new access/refresh token pair.
+      headers:
+        X-Request-ID:
+          $ref: "#/components/headers/RequestID"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/TokenResponse"
+    Tenant:
+      description: The tenant.
+      headers:
+        X-Request-ID:
+          $ref: "#/components/headers/RequestID"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Tenant"
+    Member:
+      description: The member after the change.
+      headers:
+        X-Request-ID:
+          $ref: "#/components/headers/RequestID"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Member"
+    Invitation:
+      description: The invitation.
+      headers:
+        X-Request-ID:
+          $ref: "#/components/headers/RequestID"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Invitation"
+    InvitationAccepted:
+      description: The caller is now a member. `tokens` is present when a new account was created.
+      headers:
+        X-Request-ID:
+          $ref: "#/components/headers/RequestID"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/AcceptInvitationResponse"
+    BadRequest:
+      description: "Malformed JSON, unknown fields, or wrong field types (`invalid_json`)."
+      headers:
+        X-Request-ID:
+          $ref: "#/components/headers/RequestID"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Unauthorized:
+      description: "`authentication_required`, `invalid_token`, `invalid_credentials` or `login_required`."
+      headers:
+        X-Request-ID:
+          $ref: "#/components/headers/RequestID"
+        WWW-Authenticate:
+          schema: { type: string }
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Forbidden:
+      description: "`insufficient_permissions`, `membership_inactive`, `tenant_inactive`, `invitation_email_mismatch` or `forbidden`."
+      headers:
+        X-Request-ID:
+          $ref: "#/components/headers/RequestID"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    NotFound:
+      description: The resource does not exist or is not visible to the caller.
+      headers:
+        X-Request-ID:
+          $ref: "#/components/headers/RequestID"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Conflict:
+      description: "`last_owner`, `already_member` or `slug_taken`."
+      headers:
+        X-Request-ID:
+          $ref: "#/components/headers/RequestID"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Gone:
+      description: "`invitation_gone`: the invitation expired, was revoked, or was already used."
+      headers:
+        X-Request-ID:
+          $ref: "#/components/headers/RequestID"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    PayloadTooLarge:
+      description: The request body exceeds the size limit.
+      headers:
+        X-Request-ID:
+          $ref: "#/components/headers/RequestID"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    UnsupportedMediaType:
+      description: The request body is not `application/json`.
+      headers:
+        X-Request-ID:
+          $ref: "#/components/headers/RequestID"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    ValidationFailed:
+      description: "`validation_failed`; `details` lists each invalid field."
+      headers:
+        X-Request-ID:
+          $ref: "#/components/headers/RequestID"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    TooManyRequests:
+      description: "`rate_limited`."
+      headers:
+        X-Request-ID:
+          $ref: "#/components/headers/RequestID"
+        Retry-After:
+          $ref: "#/components/headers/RetryAfter"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    ServiceUnavailable:
+      description: A required dependency is unavailable.
+      headers:
+        X-Request-ID:
+          $ref: "#/components/headers/RequestID"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+  schemas:
+    Appointment:
+      type: object
+      additionalProperties: false
+      required: [id, location_id, party_id, party_name, vehicle_id, vehicle_plate, appointment_type, starts_at, ends_at, status, channel, reason, notes, assigned_membership_id, cancel_reason, version, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        location_id: { type: string, format: uuid }
+        party_id: { type: string, format: uuid }
+        party_name: { type: string }
+        vehicle_id: { type: [string, "null"], format: uuid }
+        vehicle_plate: { type: [string, "null"] }
+        appointment_type: { type: string }
+        starts_at: { type: string, format: date-time }
+        ends_at: { type: string, format: date-time }
+        status: { type: string }
+        channel: { type: string }
+        reason: { type: [string, "null"] }
+        notes: { type: [string, "null"] }
+        assigned_membership_id: { type: [string, "null"], format: uuid }
+        cancel_reason: { type: [string, "null"] }
+        version: { type: integer }
+        created_at: { type: string, format: date-time }
+    AppointmentList:
+      type: object
+      additionalProperties: false
+      required: [items, next_cursor]
+      properties:
+        items: { type: array, items: { $ref: "#/components/schemas/Appointment" } }
+        next_cursor: { $ref: "#/components/schemas/NextCursor" }
+    CreateAppointmentRequest:
+      type: object
+      additionalProperties: false
+      required: [location_id, party_id, appointment_type, starts_at, ends_at, channel]
+      properties:
+        location_id: { type: string, format: uuid }
+        party_id: { type: string, format: uuid }
+        vehicle_id: { type: [string, "null"], format: uuid }
+        appointment_type: { type: string, enum: [maintenance, diagnosis, repair, return, inspection, other] }
+        starts_at: { type: string, format: date-time }
+        ends_at: { type: string, format: date-time }
+        channel: { type: string, enum: [phone, walk_in, whatsapp, web, email, other] }
+        reason: { type: [string, "null"] }
+        notes: { type: [string, "null"] }
+        assigned_membership_id: { type: [string, "null"], format: uuid }
+    UpdateAppointmentRequest:
+      type: object
+      additionalProperties: false
+      required: [version]
+      properties:
+        version: { type: integer, minimum: 1 }
+        vehicle_id: { type: [string, "null"], format: uuid }
+        appointment_type: { type: string }
+        starts_at: { type: string, format: date-time }
+        ends_at: { type: string, format: date-time }
+        channel: { type: string }
+        reason: { type: [string, "null"] }
+        notes: { type: [string, "null"] }
+        assigned_membership_id: { type: [string, "null"], format: uuid }
+    StatusChangeRequest:
+      type: object
+      additionalProperties: false
+      required: [version, status]
+      properties:
+        version: { type: integer, minimum: 1 }
+        status: { type: string }
+        reason: { type: [string, "null"] }
+    InspectionTemplateItem:
+      type: object
+      additionalProperties: false
+      required: [label, answer_type, required]
+      properties:
+        id: { type: string, format: uuid }
+        position: { type: integer }
+        section: { type: [string, "null"] }
+        label: { type: string }
+        answer_type: { type: string, enum: [condition, yes_no, number, text] }
+        required: { type: boolean }
+        unit: { type: [string, "null"] }
+    InspectionTemplate:
+      type: object
+      additionalProperties: false
+      required: [id, group_id, version_number, name, vehicle_type, status, published_at, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        group_id: { type: string, format: uuid }
+        version_number: { type: integer }
+        name: { type: string }
+        vehicle_type: { type: [string, "null"] }
+        status: { type: string, enum: [draft, published, archived] }
+        published_at: { type: [string, "null"], format: date-time }
+        items: { type: array, items: { $ref: "#/components/schemas/InspectionTemplateItem" } }
+        created_at: { type: string, format: date-time }
+    InspectionTemplateList:
+      type: object
+      additionalProperties: false
+      required: [items, next_cursor]
+      properties:
+        items: { type: array, items: { $ref: "#/components/schemas/InspectionTemplate" } }
+        next_cursor: { $ref: "#/components/schemas/NextCursor" }
+    InspectionTemplateRequest:
+      type: object
+      additionalProperties: false
+      required: [name, items]
+      properties:
+        name: { type: string }
+        vehicle_type: { type: [string, "null"] }
+        items: { type: array, maxItems: 500, items: { $ref: "#/components/schemas/InspectionTemplateItem" } }
+    InspectionAnswer:
+      type: object
+      additionalProperties: false
+      required: [template_item_id, condition, bool_value, number_value, text_value, notes]
+      properties:
+        template_item_id: { type: string, format: uuid }
+        position: { type: integer }
+        section: { type: [string, "null"] }
+        label: { type: string }
+        answer_type: { type: string }
+        required: { type: boolean }
+        unit: { type: [string, "null"] }
+        condition: { type: [string, "null"] }
+        bool_value: { type: [boolean, "null"] }
+        number_value: { type: [string, "null"], pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
+        text_value: { type: [string, "null"] }
+        notes: { type: [string, "null"] }
+    Inspection:
+      type: object
+      additionalProperties: false
+      required: [id, location_id, vehicle_id, template_id, work_order_id, status, odometer_km, fuel_level, notes, recommendations, customer_acknowledged_name, customer_acknowledged_at, completed_at, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        location_id: { type: string, format: uuid }
+        vehicle_id: { type: string, format: uuid }
+        template_id: { type: string, format: uuid }
+        work_order_id: { type: [string, "null"], format: uuid }
+        status: { type: string, enum: [in_progress, completed] }
+        odometer_km: { type: [integer, "null"] }
+        fuel_level: { type: [string, "null"] }
+        notes: { type: [string, "null"] }
+        recommendations: { type: [string, "null"] }
+        customer_acknowledged_name: { type: [string, "null"] }
+        customer_acknowledged_at: { type: [string, "null"], format: date-time }
+        completed_at: { type: [string, "null"], format: date-time }
+        items: { type: array, items: { $ref: "#/components/schemas/InspectionAnswer" } }
+        created_at: { type: string, format: date-time }
+    InspectionList:
+      type: object
+      additionalProperties: false
+      required: [items, next_cursor]
+      properties:
+        items: { type: array, items: { $ref: "#/components/schemas/Inspection" } }
+        next_cursor: { $ref: "#/components/schemas/NextCursor" }
+    StartInspectionRequest:
+      type: object
+      additionalProperties: false
+      required: [location_id, vehicle_id, template_id]
+      properties:
+        location_id: { type: string, format: uuid }
+        vehicle_id: { type: string, format: uuid }
+        template_id: { type: string, format: uuid }
+        work_order_id: { type: [string, "null"], format: uuid }
+        odometer_km: { type: [integer, "null"] }
+        fuel_level: { type: [string, "null"], enum: [empty, quarter, half, three_quarters, full, null] }
+    AnswerInput:
+      type: object
+      additionalProperties: false
+      required: [template_item_id]
+      properties:
+        template_item_id: { type: string, format: uuid }
+        condition: { type: [string, "null"], enum: [ok, attention, critical, not_applicable, null] }
+        bool_value: { type: [boolean, "null"] }
+        number_value: { type: [string, number, "null"] }
+        text_value: { type: [string, "null"] }
+        notes: { type: [string, "null"] }
+    InspectionResultsRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        odometer_km: { type: [integer, "null"] }
+        fuel_level: { type: [string, "null"] }
+        notes: { type: [string, "null"] }
+        recommendations: { type: [string, "null"] }
+        answers: { type: array, maxItems: 500, items: { $ref: "#/components/schemas/AnswerInput" } }
+    CompleteInspectionRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        customer_acknowledged_name: { type: [string, "null"] }
+    WorkOrderItem:
+      type: object
+      additionalProperties: false
+      required: [id, position, item_type, description, reference_code, quantity, unit_price, discount, line_total, status]
+      description: "`unit_cost` is shown only to members with `workorders.close`."
+      properties:
+        id: { type: string, format: uuid }
+        position: { type: integer }
+        item_type: { type: string }
+        description: { type: string }
+        reference_code: { type: [string, "null"] }
+        quantity: { type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
+        unit_price: { type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
+        discount: { type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
+        unit_cost: { type: [string, "null"], pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
+        line_total: { type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
+        status: { type: string, enum: [proposed, approved, declined, done, cancelled] }
+    WorkOrderTechnician:
+      type: object
+      additionalProperties: false
+      required: [membership_id, name, assigned_at]
+      properties:
+        membership_id: { type: string, format: uuid }
+        name: { type: string }
+        assigned_at: { type: string, format: date-time }
+    WorkOrder:
+      type: object
+      additionalProperties: false
+      required: [id, code, number, location_id, party_id, party_name, vehicle_id, vehicle_plate, appointment_id, status, priority, complaint, diagnosis, odometer_km, promised_at, advisor_membership_id, lead_technician_membership_id, items_total, approved_total, cancel_reason, completed_at, delivered_at, version, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        code: { type: string }
+        number: { type: integer }
+        location_id: { type: string, format: uuid }
+        party_id: { type: string, format: uuid }
+        party_name: { type: string }
+        vehicle_id: { type: string, format: uuid }
+        vehicle_plate: { type: [string, "null"] }
+        appointment_id: { type: [string, "null"], format: uuid }
+        status: { type: string }
+        priority: { type: string }
+        complaint: { type: [string, "null"] }
+        diagnosis: { type: [string, "null"] }
+        odometer_km: { type: [integer, "null"] }
+        promised_at: { type: [string, "null"], format: date-time }
+        advisor_membership_id: { type: [string, "null"], format: uuid }
+        lead_technician_membership_id: { type: [string, "null"], format: uuid }
+        items_total: { type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
+        approved_total: { type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
+        cancel_reason: { type: [string, "null"] }
+        completed_at: { type: [string, "null"], format: date-time }
+        delivered_at: { type: [string, "null"], format: date-time }
+        items: { type: array, items: { $ref: "#/components/schemas/WorkOrderItem" } }
+        technicians: { type: array, items: { $ref: "#/components/schemas/WorkOrderTechnician" } }
+        version: { type: integer }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    WorkOrderList:
+      type: object
+      additionalProperties: false
+      required: [items, next_cursor]
+      properties:
+        items: { type: array, items: { $ref: "#/components/schemas/WorkOrder" } }
+        next_cursor: { $ref: "#/components/schemas/NextCursor" }
+    CreateWorkOrderRequest:
+      type: object
+      additionalProperties: false
+      description: Either `appointment_id`, or `location_id`, `party_id` and `vehicle_id`.
+      properties:
+        location_id: { type: [string, "null"], format: uuid }
+        party_id: { type: [string, "null"], format: uuid }
+        vehicle_id: { type: [string, "null"], format: uuid }
+        appointment_id: { type: [string, "null"], format: uuid }
+        priority: { type: string, enum: [low, normal, high, urgent] }
+        complaint: { type: [string, "null"] }
+        odometer_km: { type: [integer, "null"] }
+        promised_at: { type: [string, "null"], format: date-time }
+        advisor_membership_id: { type: [string, "null"], format: uuid }
+        lead_technician_membership_id: { type: [string, "null"], format: uuid }
+    UpdateWorkOrderRequest:
+      type: object
+      additionalProperties: false
+      required: [version]
+      properties:
+        version: { type: integer, minimum: 1 }
+        priority: { type: string }
+        complaint: { type: [string, "null"] }
+        diagnosis: { type: [string, "null"] }
+        odometer_km: { type: [integer, "null"] }
+        promised_at: { type: [string, "null"], format: date-time }
+        advisor_membership_id: { type: [string, "null"], format: uuid }
+        lead_technician_membership_id: { type: [string, "null"], format: uuid }
+    WorkOrderItemRequest:
+      type: object
+      additionalProperties: false
+      required: [item_type, description, quantity, unit_price]
+      properties:
+        item_type: { type: string, enum: [part, labor, service, fee] }
+        description: { type: string }
+        reference_code: { type: [string, "null"] }
+        quantity: { type: [string, number] }
+        unit_price: { type: [string, number] }
+        discount: { type: [string, number] }
+        unit_cost: { type: [string, number, "null"] }
+    WorkOrderItemPatchRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        item_type: { type: string }
+        description: { type: string }
+        reference_code: { type: [string, "null"] }
+        quantity: { type: [string, number] }
+        unit_price: { type: [string, number] }
+        discount: { type: [string, number] }
+        unit_cost: { type: [string, number, "null"] }
+        status: { type: string, enum: [proposed, cancelled, done] }
+    WorkOrderHistory:
+      type: object
+      additionalProperties: false
+      required: [from_status, to_status, reason, source, changed_by_name, created_at]
+      properties:
+        from_status: { type: [string, "null"] }
+        to_status: { type: string }
+        reason: { type: [string, "null"] }
+        source: { type: string, enum: [staff, customer_link] }
+        changed_by_name: { type: [string, "null"] }
+        created_at: { type: string, format: date-time }
+    WorkOrderHistoryList:
+      type: object
+      additionalProperties: false
+      required: [items, next_cursor]
+      properties:
+        items: { type: array, items: { $ref: "#/components/schemas/WorkOrderHistory" } }
+        next_cursor: { $ref: "#/components/schemas/NextCursor" }
+    ItemDecision:
+      type: object
+      additionalProperties: false
+      required: [item_id, decision]
+      properties:
+        item_id: { type: string, format: uuid }
+        decision: { type: string, enum: [approved, declined] }
+    WorkOrderApproval:
+      type: object
+      additionalProperties: false
+      required: [id, channel, customer_name, approved_amount, approved_items, declined_items, notes, recorded_by_name, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        channel: { type: string }
+        customer_name: { type: string }
+        approved_amount: { type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
+        approved_items: { type: integer }
+        declined_items: { type: integer }
+        notes: { type: [string, "null"] }
+        recorded_by_name: { type: [string, "null"] }
+        created_at: { type: string, format: date-time }
+    WorkOrderApprovalList:
+      type: object
+      additionalProperties: false
+      required: [items, next_cursor]
+      properties:
+        items: { type: array, items: { $ref: "#/components/schemas/WorkOrderApproval" } }
+        next_cursor: { $ref: "#/components/schemas/NextCursor" }
+    WorkOrderApprovalRequest:
+      type: object
+      additionalProperties: false
+      required: [channel, customer_name, decisions]
+      properties:
+        channel: { type: string, enum: [in_person, phone, whatsapp, email] }
+        customer_name: { type: string }
+        notes: { type: [string, "null"] }
+        decisions: { type: array, minItems: 1, maxItems: 200, items: { $ref: "#/components/schemas/ItemDecision" } }
+    ApprovalLink:
+      type: object
+      additionalProperties: false
+      required: [url, expires_at]
+      properties:
+        url: { type: string, description: "Send to the customer; the token is in the URL fragment and is shown only once." }
+        expires_at: { type: string, format: date-time }
+    TechniciansRequest:
+      type: object
+      additionalProperties: false
+      required: [membership_ids]
+      properties:
+        membership_ids: { type: array, maxItems: 20, uniqueItems: true, items: { type: string, format: uuid } }
+    LaborEntry:
+      type: object
+      additionalProperties: false
+      required: [id, membership_id, item_id, started_at, ended_at, minutes, billable, notes]
+      properties:
+        id: { type: string, format: uuid }
+        membership_id: { type: string, format: uuid }
+        item_id: { type: [string, "null"], format: uuid }
+        started_at: { type: string, format: date-time }
+        ended_at: { type: string, format: date-time }
+        minutes: { type: integer }
+        billable: { type: boolean }
+        notes: { type: [string, "null"] }
+    LaborEntryList:
+      type: object
+      additionalProperties: false
+      required: [items, next_cursor]
+      properties:
+        items: { type: array, items: { $ref: "#/components/schemas/LaborEntry" } }
+        next_cursor: { $ref: "#/components/schemas/NextCursor" }
+    LaborEntryRequest:
+      type: object
+      additionalProperties: false
+      required: [membership_id, started_at, ended_at]
+      properties:
+        membership_id: { type: string, format: uuid }
+        item_id: { type: [string, "null"], format: uuid }
+        started_at: { type: string, format: date-time }
+        ended_at: { type: string, format: date-time }
+        billable: { type: boolean }
+        notes: { type: [string, "null"] }
+    ApprovalLinkRequest:
+      type: object
+      additionalProperties: false
+      required: [tenant_id, token]
+      properties:
+        tenant_id: { type: string, format: uuid }
+        token: { type: string, maxLength: 128 }
+    ApprovalLinkDecisionRequest:
+      type: object
+      additionalProperties: false
+      required: [tenant_id, token, customer_name, decisions]
+      properties:
+        tenant_id: { type: string, format: uuid }
+        token: { type: string, maxLength: 128 }
+        customer_name: { type: string }
+        decisions: { type: array, minItems: 1, maxItems: 200, items: { $ref: "#/components/schemas/ItemDecision" } }
+    PublicWorkOrderItem:
+      type: object
+      additionalProperties: false
+      required: [id, item_type, description, quantity, unit_price, discount, line_total, status]
+      properties:
+        id: { type: string, format: uuid }
+        item_type: { type: string }
+        description: { type: string }
+        quantity: { type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
+        unit_price: { type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
+        discount: { type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
+        line_total: { type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
+        status: { type: string, enum: [proposed, approved, declined, done, cancelled] }
+    PublicWorkOrder:
+      type: object
+      additionalProperties: false
+      required: [tenant_name, code, vehicle_plate, status, items, items_total, approved_total, expires_at]
+      properties:
+        tenant_name: { type: string }
+        code: { type: string }
+        vehicle_plate: { type: [string, "null"] }
+        status: { type: string }
+        items: { type: array, items: { $ref: "#/components/schemas/PublicWorkOrderItem" } }
+        items_total: { type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
+        approved_total: { type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
+        expires_at: { type: string, format: date-time }
+    VehicleType:
+      type: string
+      enum: [motorcycle, car, pickup, truck, other]
+    PostalAddress:
+      type: object
+      additionalProperties: false
+      required: [postal_code, street, number, complement, district, city, state, ibge_city_code]
+      description: CEP (8 digits), UF (2 letters) and IBGE code (7 digits) are normalized.
+      properties:
+        postal_code: { type: [string, "null"] }
+        street: { type: [string, "null"] }
+        number: { type: [string, "null"] }
+        complement: { type: [string, "null"] }
+        district: { type: [string, "null"] }
+        city: { type: [string, "null"] }
+        state: { type: [string, "null"] }
+        ibge_city_code: { type: [string, "null"] }
+    LegalEntity:
+      type: object
+      additionalProperties: false
+      required: [id, legal_name, trade_name, cnpj, state_registration, municipal_registration, tax_regime, email, phone, address, status, version, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        legal_name: { type: string }
+        trade_name: { type: [string, "null"] }
+        cnpj: { type: string }
+        state_registration: { type: [string, "null"] }
+        municipal_registration: { type: [string, "null"] }
+        tax_regime: { type: [string, "null"] }
+        email: { type: [string, "null"] }
+        phone: { type: [string, "null"] }
+        address: { $ref: "#/components/schemas/PostalAddress" }
+        status: { type: string, enum: [active, inactive] }
+        version: { type: integer }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    LegalEntityList:
+      type: object
+      additionalProperties: false
+      required: [items, next_cursor]
+      properties:
+        items: { type: array, items: { $ref: "#/components/schemas/LegalEntity" } }
+        next_cursor: { $ref: "#/components/schemas/NextCursor" }
+    CreateLegalEntityRequest:
+      type: object
+      additionalProperties: false
+      required: [legal_name, cnpj]
+      properties:
+        legal_name: { type: string }
+        trade_name: { type: [string, "null"] }
+        cnpj: { type: string }
+        state_registration: { type: [string, "null"] }
+        municipal_registration: { type: [string, "null"] }
+        tax_regime: { type: [string, "null"] }
+        email: { type: [string, "null"] }
+        phone: { type: [string, "null"] }
+        address: { $ref: "#/components/schemas/PostalAddress" }
+    UpdateLegalEntityRequest:
+      type: object
+      additionalProperties: false
+      required: [version]
+      properties:
+        version: { type: integer, minimum: 1 }
+        legal_name: { type: string }
+        trade_name: { type: [string, "null"] }
+        cnpj: { type: string }
+        state_registration: { type: [string, "null"] }
+        municipal_registration: { type: [string, "null"] }
+        tax_regime: { type: [string, "null"] }
+        email: { type: [string, "null"] }
+        phone: { type: [string, "null"] }
+        address: { oneOf: [{ $ref: "#/components/schemas/PostalAddress" }, { type: "null" }] }
+        status: { type: string }
+    Location:
+      type: object
+      additionalProperties: false
+      required: [id, legal_entity_id, code, name, location_type, email, phone, address, timezone, appointment_capacity, status, version, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        legal_entity_id: { type: [string, "null"], format: uuid }
+        code: { type: string }
+        name: { type: string }
+        location_type: { type: string }
+        email: { type: [string, "null"] }
+        phone: { type: [string, "null"] }
+        address: { $ref: "#/components/schemas/PostalAddress" }
+        timezone: { type: string }
+        appointment_capacity: { type: integer, minimum: 1, maximum: 100 }
+        status: { type: string }
+        version: { type: integer }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    LocationList:
+      type: object
+      additionalProperties: false
+      required: [items, next_cursor]
+      properties:
+        items: { type: array, items: { $ref: "#/components/schemas/Location" } }
+        next_cursor: { $ref: "#/components/schemas/NextCursor" }
+    CreateLocationRequest:
+      type: object
+      additionalProperties: false
+      required: [code, name, location_type]
+      properties:
+        legal_entity_id: { type: [string, "null"], format: uuid }
+        code: { type: string }
+        name: { type: string }
+        location_type: { type: string, enum: [workshop, dealership, parts_warehouse, bodyshop, distribution_center, office, other] }
+        email: { type: [string, "null"] }
+        phone: { type: [string, "null"] }
+        address: { $ref: "#/components/schemas/PostalAddress" }
+        timezone: { type: string }
+        appointment_capacity: { type: integer, minimum: 1, maximum: 100 }
+    UpdateLocationRequest:
+      type: object
+      additionalProperties: false
+      required: [version]
+      properties:
+        version: { type: integer, minimum: 1 }
+        legal_entity_id: { type: [string, "null"], format: uuid }
+        code: { type: string }
+        name: { type: string }
+        location_type: { type: string }
+        email: { type: [string, "null"] }
+        phone: { type: [string, "null"] }
+        address: { oneOf: [{ $ref: "#/components/schemas/PostalAddress" }, { type: "null" }] }
+        timezone: { type: string }
+        appointment_capacity: { type: integer, minimum: 1, maximum: 100 }
+        status: { type: string }
+    MemberLocations:
+      type: object
+      additionalProperties: false
+      required: [location_ids]
+      properties:
+        location_ids: { type: array, maxItems: 200, uniqueItems: true, items: { type: string, format: uuid } }
+    PartyProfile:
+      type: object
+      additionalProperties: false
+      required: [code, notes]
+      properties:
+        code: { type: [string, "null"] }
+        payment_terms_days: { type: [integer, "null"] }
+        notes: { type: [string, "null"] }
+    Party:
+      type: object
+      additionalProperties: false
+      required: [id, party_type, display_name, legal_name, document_number, birth_date, email, phone, mobile, notes, status, version, customer, supplier, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        party_type: { type: string, enum: [person, company] }
+        display_name: { type: string }
+        legal_name: { type: [string, "null"] }
+        document_number: { type: [string, "null"] }
+        birth_date: { type: [string, "null"], format: date }
+        email: { type: [string, "null"] }
+        phone: { type: [string, "null"] }
+        mobile: { type: [string, "null"] }
+        notes: { type: [string, "null"] }
+        status: { type: string, enum: [active, inactive, blocked] }
+        version: { type: integer }
+        customer: { oneOf: [{ $ref: "#/components/schemas/PartyProfile" }, { type: "null" }] }
+        supplier: { oneOf: [{ $ref: "#/components/schemas/PartyProfile" }, { type: "null" }] }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    PartyList:
+      type: object
+      additionalProperties: false
+      required: [items, next_cursor]
+      properties:
+        items: { type: array, items: { $ref: "#/components/schemas/Party" } }
+        next_cursor: { $ref: "#/components/schemas/NextCursor" }
+    PartyProfileRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        code: { type: [string, "null"] }
+        payment_terms_days: { type: [integer, "null"] }
+        notes: { type: [string, "null"] }
+    CreatePartyRequest:
+      type: object
+      additionalProperties: false
+      description: Either `party_id` (add the profile to an existing party) or `party_type` and `display_name`.
+      properties:
+        party_id: { type: [string, "null"], format: uuid }
+        party_type: { type: string, enum: [person, company] }
+        display_name: { type: string }
+        legal_name: { type: [string, "null"] }
+        document_number: { type: [string, "null"], description: "CPF or CNPJ, with or without formatting." }
+        birth_date: { type: [string, "null"], format: date }
+        email: { type: [string, "null"] }
+        phone: { type: [string, "null"] }
+        mobile: { type: [string, "null"] }
+        notes: { type: [string, "null"] }
+        profile: { oneOf: [{ $ref: "#/components/schemas/PartyProfileRequest" }, { type: "null" }] }
+    UpdatePartyRequest:
+      type: object
+      additionalProperties: false
+      required: [version]
+      properties:
+        version: { type: integer, minimum: 1 }
+        party_type: { type: string }
+        display_name: { type: string }
+        legal_name: { type: [string, "null"] }
+        document_number: { type: [string, "null"] }
+        birth_date: { type: [string, "null"], format: date }
+        email: { type: [string, "null"] }
+        phone: { type: [string, "null"] }
+        mobile: { type: [string, "null"] }
+        notes: { type: [string, "null"] }
+        status: { type: string }
+        profile: { $ref: "#/components/schemas/PartyProfileRequest" }
+    Contact:
+      type: object
+      additionalProperties: false
+      required: [id, name, role, email, phone, archived, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        role: { type: [string, "null"] }
+        email: { type: [string, "null"] }
+        phone: { type: [string, "null"] }
+        archived: { type: boolean }
+        created_at: { type: string, format: date-time }
+    ContactList:
+      type: object
+      additionalProperties: false
+      required: [items, next_cursor]
+      properties:
+        items: { type: array, items: { $ref: "#/components/schemas/Contact" } }
+        next_cursor: { $ref: "#/components/schemas/NextCursor" }
+    ContactRequest:
+      type: object
+      additionalProperties: false
+      required: [name]
+      properties:
+        name: { type: string }
+        role: { type: [string, "null"] }
+        email: { type: [string, "null"] }
+        phone: { type: [string, "null"] }
+    ContactPatchRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        name: { type: string }
+        role: { type: [string, "null"] }
+        email: { type: [string, "null"] }
+        phone: { type: [string, "null"] }
+        archived: { type: boolean }
+    PartyAddress:
+      type: object
+      additionalProperties: false
+      required: [id, address_type, is_primary, address, archived, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        address_type: { type: string }
+        is_primary: { type: boolean }
+        address: { $ref: "#/components/schemas/PostalAddress" }
+        archived: { type: boolean }
+        created_at: { type: string, format: date-time }
+    PartyAddressList:
+      type: object
+      additionalProperties: false
+      required: [items, next_cursor]
+      properties:
+        items: { type: array, items: { $ref: "#/components/schemas/PartyAddress" } }
+        next_cursor: { $ref: "#/components/schemas/NextCursor" }
+    PartyAddressRequest:
+      type: object
+      additionalProperties: false
+      required: [address_type, address]
+      properties:
+        address_type: { type: string, enum: [billing, shipping, residential, commercial, fiscal, other] }
+        is_primary: { type: boolean }
+        address: { $ref: "#/components/schemas/PostalAddress" }
+    PartyAddressPatchRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        address_type: { type: string }
+        is_primary: { type: boolean }
+        address: { $ref: "#/components/schemas/PostalAddress" }
+        archived: { type: boolean }
+    VehicleMake:
+      type: object
+      additionalProperties: false
+      required: [id, name, vehicle_types, active]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        vehicle_types: { type: array, items: { $ref: "#/components/schemas/VehicleType" } }
+        active: { type: boolean }
+    VehicleMakeList:
+      type: object
+      additionalProperties: false
+      required: [items, next_cursor]
+      properties:
+        items: { type: array, items: { $ref: "#/components/schemas/VehicleMake" } }
+        next_cursor: { $ref: "#/components/schemas/NextCursor" }
+    VehicleMakeRequest:
+      type: object
+      additionalProperties: false
+      required: [name, vehicle_types]
+      properties:
+        name: { type: string }
+        vehicle_types: { type: array, minItems: 1, items: { $ref: "#/components/schemas/VehicleType" } }
+        active: { type: boolean }
+    VehicleModel:
+      type: object
+      additionalProperties: false
+      required: [id, make_id, name, vehicle_type, active]
+      properties:
+        id: { type: string, format: uuid }
+        make_id: { type: string, format: uuid }
+        name: { type: string }
+        vehicle_type: { $ref: "#/components/schemas/VehicleType" }
+        active: { type: boolean }
+    VehicleModelList:
+      type: object
+      additionalProperties: false
+      required: [items, next_cursor]
+      properties:
+        items: { type: array, items: { $ref: "#/components/schemas/VehicleModel" } }
+        next_cursor: { $ref: "#/components/schemas/NextCursor" }
+    VehicleModelRequest:
+      type: object
+      additionalProperties: false
+      required: [name]
+      properties:
+        name: { type: string }
+        vehicle_type: { $ref: "#/components/schemas/VehicleType" }
+        active: { type: boolean }
+    VehicleVariant:
+      type: object
+      additionalProperties: false
+      required: [id, model_id, name, year_from, year_to, engine_cc, fuel_type, transmission, active]
+      properties:
+        id: { type: string, format: uuid }
+        model_id: { type: string, format: uuid }
+        name: { type: string }
+        year_from: { type: [integer, "null"] }
+        year_to: { type: [integer, "null"] }
+        engine_cc: { type: [integer, "null"] }
+        fuel_type: { type: [string, "null"] }
+        transmission: { type: [string, "null"] }
+        active: { type: boolean }
+    VehicleVariantList:
+      type: object
+      additionalProperties: false
+      required: [items, next_cursor]
+      properties:
+        items: { type: array, items: { $ref: "#/components/schemas/VehicleVariant" } }
+        next_cursor: { $ref: "#/components/schemas/NextCursor" }
+    VehicleVariantRequest:
+      type: object
+      additionalProperties: false
+      required: [name]
+      properties:
+        name: { type: string }
+        year_from: { type: [integer, "null"] }
+        year_to: { type: [integer, "null"] }
+        engine_cc: { type: [integer, "null"] }
+        fuel_type: { type: [string, "null"] }
+        transmission: { type: [string, "null"] }
+        active: { type: boolean }
+    VehicleOwner:
+      type: object
+      additionalProperties: false
+      required: [party_id, name]
+      properties:
+        party_id: { type: string, format: uuid }
+        name: { type: string }
+    Vehicle:
+      type: object
+      additionalProperties: false
+      required: [id, vehicle_type, make_id, model_id, variant_id, make_name, model_name, variant_name, make_text, model_text, current_plate, chassis_number, renavam, engine_number, manufacture_year, model_year, color, fuel_type, engine_cc, odometer_km, owner, notes, status, version, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        vehicle_type: { $ref: "#/components/schemas/VehicleType" }
+        make_id: { type: [string, "null"], format: uuid }
+        model_id: { type: [string, "null"], format: uuid }
+        variant_id: { type: [string, "null"], format: uuid }
+        make_name: { type: [string, "null"] }
+        model_name: { type: [string, "null"] }
+        variant_name: { type: [string, "null"] }
+        make_text: { type: [string, "null"] }
+        model_text: { type: [string, "null"] }
+        current_plate: { type: [string, "null"] }
+        chassis_number: { type: [string, "null"] }
+        renavam: { type: [string, "null"] }
+        engine_number: { type: [string, "null"] }
+        manufacture_year: { type: [integer, "null"] }
+        model_year: { type: [integer, "null"] }
+        color: { type: [string, "null"] }
+        fuel_type: { type: [string, "null"] }
+        engine_cc: { type: [integer, "null"] }
+        odometer_km: { type: [integer, "null"] }
+        owner: { oneOf: [{ $ref: "#/components/schemas/VehicleOwner" }, { type: "null" }] }
+        notes: { type: [string, "null"] }
+        status: { type: string, enum: [active, inactive, sold, written_off] }
+        version: { type: integer }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    VehicleList:
+      type: object
+      additionalProperties: false
+      required: [items, next_cursor]
+      properties:
+        items: { type: array, items: { $ref: "#/components/schemas/Vehicle" } }
+        next_cursor: { $ref: "#/components/schemas/NextCursor" }
+    CreateVehicleRequest:
+      type: object
+      additionalProperties: false
+      required: [vehicle_type]
+      description: Identify the make with `make_id` (catalogue) or `make_text` (free text).
+      properties:
+        vehicle_type: { $ref: "#/components/schemas/VehicleType" }
+        make_id: { type: [string, "null"], format: uuid }
+        model_id: { type: [string, "null"], format: uuid }
+        variant_id: { type: [string, "null"], format: uuid }
+        make_text: { type: [string, "null"] }
+        model_text: { type: [string, "null"] }
+        chassis_number: { type: [string, "null"] }
+        renavam: { type: [string, "null"] }
+        engine_number: { type: [string, "null"] }
+        manufacture_year: { type: [integer, "null"] }
+        model_year: { type: [integer, "null"] }
+        color: { type: [string, "null"] }
+        fuel_type: { type: [string, "null"] }
+        engine_cc: { type: [integer, "null"] }
+        odometer_km: { type: [integer, "null"] }
+        notes: { type: [string, "null"] }
+        plate: { type: [string, "null"], description: "Legacy (ABC1234) or Mercosul (ABC1D23)." }
+        owner_party_id: { type: [string, "null"], format: uuid }
+    UpdateVehicleRequest:
+      type: object
+      additionalProperties: false
+      required: [version]
+      properties:
+        version: { type: integer, minimum: 1 }
+        vehicle_type: { type: string }
+        make_id: { type: [string, "null"], format: uuid }
+        model_id: { type: [string, "null"], format: uuid }
+        variant_id: { type: [string, "null"], format: uuid }
+        make_text: { type: [string, "null"] }
+        model_text: { type: [string, "null"] }
+        chassis_number: { type: [string, "null"] }
+        renavam: { type: [string, "null"] }
+        engine_number: { type: [string, "null"] }
+        manufacture_year: { type: [integer, "null"] }
+        model_year: { type: [integer, "null"] }
+        color: { type: [string, "null"] }
+        fuel_type: { type: [string, "null"] }
+        engine_cc: { type: [integer, "null"] }
+        odometer_km: { type: [integer, "null"] }
+        notes: { type: [string, "null"] }
+        status: { type: string }
+    Plate:
+      type: object
+      additionalProperties: false
+      required: [id, plate, valid_from, valid_to, current]
+      properties:
+        id: { type: string, format: uuid }
+        plate: { type: string }
+        valid_from: { type: string, format: date }
+        valid_to: { type: [string, "null"], format: date }
+        current: { type: boolean }
+    PlateList:
+      type: object
+      additionalProperties: false
+      required: [items, next_cursor]
+      properties:
+        items: { type: array, items: { $ref: "#/components/schemas/Plate" } }
+        next_cursor: { $ref: "#/components/schemas/NextCursor" }
+    PlateRequest:
+      type: object
+      additionalProperties: false
+      required: [plate]
+      properties:
+        plate: { type: string }
+        valid_from: { type: string, format: date }
+    Ownership:
+      type: object
+      additionalProperties: false
+      required: [id, party_id, party_name, relationship, valid_from, valid_to, current, notes]
+      properties:
+        id: { type: string, format: uuid }
+        party_id: { type: string, format: uuid }
+        party_name: { type: string }
+        relationship: { type: string, enum: [owner, lessee, driver, fleet_manager] }
+        valid_from: { type: string, format: date }
+        valid_to: { type: [string, "null"], format: date }
+        current: { type: boolean }
+        notes: { type: [string, "null"] }
+    OwnershipList:
+      type: object
+      additionalProperties: false
+      required: [items, next_cursor]
+      properties:
+        items: { type: array, items: { $ref: "#/components/schemas/Ownership" } }
+        next_cursor: { $ref: "#/components/schemas/NextCursor" }
+    OwnershipRequest:
+      type: object
+      additionalProperties: false
+      required: [party_id, relationship]
+      properties:
+        party_id: { type: string, format: uuid }
+        relationship: { type: string, enum: [owner, lessee, driver, fleet_manager] }
+        valid_from: { type: string, format: date }
+        notes: { type: [string, "null"] }
+    LivenessStatus:
+      type: object
+      additionalProperties: false
+      required: [status]
+      properties:
+        status:
+          const: ok
+    ReadinessStatus:
+      type: object
+      additionalProperties: false
+      required: [status]
+      properties:
+        status:
+          const: ready
+    Error:
+      type: object
+      additionalProperties: false
+      required: [error]
+      properties:
+        error:
+          type: object
+          additionalProperties: false
+          required: [code, message, request_id]
+          properties:
+            code:
+              type: string
+              pattern: "^[a-z][a-z0-9_]*$"
+              description: Stable, machine-readable error code.
+              examples: [not_found, invalid_credentials, last_owner]
+            message:
+              type: string
+              description: Safe, human-readable description. Do not parse.
+            request_id:
+              type: string
+              description: Same value as the X-Request-ID response header.
+            details:
+              type: array
+              items:
+                $ref: "#/components/schemas/ErrorDetail"
+    ErrorDetail:
+      type: object
+      additionalProperties: false
+      required: [field, issue]
+      properties:
+        field:
+          type: string
+        issue:
+          type: string
+    Email:
+      type: string
+      format: email
+      minLength: 3
+      maxLength: 254
+    NewPassword:
+      type: string
+      minLength: 12
+      maxLength: 256
+      description: 12 to 256 characters.
+    Timezone:
+      type: string
+      maxLength: 64
+      description: IANA time zone.
+      examples: [America/Sao_Paulo]
+    NextCursor:
+      type: [string, "null"]
+      description: Cursor for the next page, or null on the last page.
+
+    LoginRequest:
+      type: object
+      additionalProperties: false
+      required: [email, password]
+      properties:
+        email: { $ref: "#/components/schemas/Email" }
+        password: { type: string, minLength: 1, maxLength: 1024 }
+    RefreshRequest:
+      type: object
+      additionalProperties: false
+      required: [refresh_token]
+      properties:
+        refresh_token: { type: string, maxLength: 128 }
+    ForgotPasswordRequest:
+      type: object
+      additionalProperties: false
+      required: [email]
+      properties:
+        email: { $ref: "#/components/schemas/Email" }
+    ResetPasswordRequest:
+      type: object
+      additionalProperties: false
+      required: [token, new_password]
+      properties:
+        token: { type: string, maxLength: 128, description: Token from the reset link's URL fragment. }
+        new_password: { $ref: "#/components/schemas/NewPassword" }
+    ChangePasswordRequest:
+      type: object
+      additionalProperties: false
+      required: [current_password, new_password]
+      properties:
+        current_password: { type: string, maxLength: 1024 }
+        new_password: { $ref: "#/components/schemas/NewPassword" }
+    TokenResponse:
+      type: object
+      additionalProperties: false
+      required: [token_type, access_token, access_token_expires_at, refresh_token, refresh_token_expires_at]
+      properties:
+        token_type: { const: Bearer }
+        access_token: { type: string, pattern: "^kzat_[A-Za-z0-9_-]{43}$" }
+        access_token_expires_at: { type: string, format: date-time }
+        refresh_token: { type: string, pattern: "^kzrt_[A-Za-z0-9_-]{43}$" }
+        refresh_token_expires_at: { type: string, format: date-time }
+    User:
+      type: object
+      additionalProperties: false
+      required: [id, email, full_name, phone, platform_admin]
+      properties:
+        id: { type: string, format: uuid }
+        email: { type: string }
+        full_name: { type: string }
+        phone: { type: [string, "null"] }
+        platform_admin: { type: boolean }
+    Session:
+      type: object
+      additionalProperties: false
+      required: [id, created_at, last_seen_at, expires_at, ip, user_agent, current]
+      properties:
+        id: { type: string, format: uuid }
+        created_at: { type: string, format: date-time }
+        last_seen_at: { type: string, format: date-time }
+        expires_at: { type: string, format: date-time }
+        ip: { type: [string, "null"] }
+        user_agent: { type: [string, "null"] }
+        current: { type: boolean, description: True for the session making this request. }
+    SessionList:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/Session" }
+
+    Tenant:
+      type: object
+      additionalProperties: false
+      required: [id, name, slug, status, timezone, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        slug: { type: string }
+        status: { type: string, enum: [active, suspended, closed] }
+        timezone: { $ref: "#/components/schemas/Timezone" }
+        created_at: { type: string, format: date-time }
+    TenantList:
+      type: object
+      additionalProperties: false
+      required: [items, next_cursor]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/Tenant" }
+        next_cursor: { $ref: "#/components/schemas/NextCursor" }
+    UserTenant:
+      type: object
+      additionalProperties: false
+      required: [id, name, slug, status, timezone, membership_id]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        slug: { type: string }
+        status: { type: string, enum: [active, suspended, closed] }
+        timezone: { $ref: "#/components/schemas/Timezone" }
+        membership_id: { type: string, format: uuid }
+    UserTenantList:
+      type: object
+      additionalProperties: false
+      required: [items, next_cursor]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/UserTenant" }
+        next_cursor: { $ref: "#/components/schemas/NextCursor" }
+    UpdateTenantRequest:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        name: { type: string, minLength: 2, maxLength: 180 }
+        timezone: { $ref: "#/components/schemas/Timezone" }
+    RoleRef:
+      type: object
+      additionalProperties: false
+      required: [id, code]
+      properties:
+        id: { type: string, format: uuid }
+        code: { type: string }
+    Member:
+      type: object
+      additionalProperties: false
+      required: [id, user_id, email, full_name, status, joined_at, roles]
+      properties:
+        id: { type: string, format: uuid, description: Membership ID. }
+        user_id: { type: string, format: uuid }
+        email: { type: string }
+        full_name: { type: string }
+        status: { type: string, enum: [active, suspended] }
+        joined_at: { type: string, format: date-time }
+        roles:
+          type: array
+          items: { $ref: "#/components/schemas/RoleRef" }
+    MemberList:
+      type: object
+      additionalProperties: false
+      required: [items, next_cursor]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/Member" }
+        next_cursor: { $ref: "#/components/schemas/NextCursor" }
+    UpdateMemberRequest:
+      type: object
+      additionalProperties: false
+      required: [status]
+      properties:
+        status: { type: string, enum: [active, suspended, removed] }
+    ReplaceRolesRequest:
+      type: object
+      additionalProperties: false
+      required: [role_ids]
+      properties:
+        role_ids:
+          type: array
+          minItems: 1
+          maxItems: 10
+          uniqueItems: true
+          items: { type: string, format: uuid }
+    Role:
+      type: object
+      additionalProperties: false
+      required: [id, code, name, is_system, permissions]
+      properties:
+        id: { type: string, format: uuid }
+        code: { type: string }
+        name: { type: string }
+        is_system: { type: boolean }
+        permissions:
+          type: array
+          items: { type: string }
+    RoleList:
+      type: object
+      additionalProperties: false
+      required: [items, next_cursor]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/Role" }
+        next_cursor: { $ref: "#/components/schemas/NextCursor" }
+    Invitation:
+      type: object
+      additionalProperties: false
+      required: [id, email, role_id, role_code, status, expires_at, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        email: { type: string }
+        role_id: { type: string, format: uuid }
+        role_code: { type: string }
+        status: { type: string, enum: [pending, accepted, revoked] }
+        expires_at: { type: string, format: date-time }
+        created_at: { type: string, format: date-time }
+    InvitationList:
+      type: object
+      additionalProperties: false
+      required: [items, next_cursor]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/Invitation" }
+        next_cursor: { $ref: "#/components/schemas/NextCursor" }
+    InviteRequest:
+      type: object
+      additionalProperties: false
+      required: [email, role_id]
+      properties:
+        email: { $ref: "#/components/schemas/Email" }
+        role_id: { type: string, format: uuid }
+    InvitationLink:
+      type: object
+      additionalProperties: false
+      required: [tenant_id, token]
+      description: Both values come from the invitation link's URL fragment.
+      properties:
+        tenant_id: { type: string, format: uuid }
+        token: { type: string, maxLength: 128 }
+    AcceptInvitationRequest:
+      type: object
+      additionalProperties: false
+      required: [tenant_id, token]
+      properties:
+        tenant_id: { type: string, format: uuid }
+        token: { type: string, maxLength: 128 }
+        full_name: { type: string, minLength: 1, maxLength: 180, description: Required when creating an account. }
+        password: { $ref: "#/components/schemas/NewPassword" }
+    InvitationPreview:
+      type: object
+      additionalProperties: false
+      required: [tenant_name, email, role_code, expires_at, account_exists]
+      properties:
+        tenant_name: { type: string }
+        email: { type: string }
+        role_code: { type: string }
+        expires_at: { type: string, format: date-time }
+        account_exists: { type: boolean, description: When true, log in before accepting. }
+    AcceptInvitationResponse:
+      type: object
+      additionalProperties: false
+      required: [tenant_id, membership_id, tokens]
+      properties:
+        tenant_id: { type: string, format: uuid }
+        membership_id: { type: string, format: uuid }
+        tokens:
+          oneOf:
+            - $ref: "#/components/schemas/TokenResponse"
+            - type: "null"
+    AuditLog:
+      type: object
+      additionalProperties: false
+      required: [id, actor_user_id, actor_name, action, entity_type, entity_id, request_id, metadata, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        actor_user_id: { type: [string, "null"], format: uuid }
+        actor_name: { type: [string, "null"] }
+        action: { type: string, examples: [membership.roles_changed] }
+        entity_type: { type: string }
+        entity_id: { type: [string, "null"], format: uuid }
+        request_id: { type: [string, "null"] }
+        metadata: { type: object }
+        created_at: { type: string, format: date-time }
+    AuditLogList:
+      type: object
+      additionalProperties: false
+      required: [items, next_cursor]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/AuditLog" }
+        next_cursor: { $ref: "#/components/schemas/NextCursor" }
+    CreateTenantRequest:
+      type: object
+      additionalProperties: false
+      required: [name, slug, owner_email]
+      properties:
+        name: { type: string, minLength: 2, maxLength: 180 }
+        slug: { type: string, minLength: 2, maxLength: 63, pattern: "^[a-z0-9]+(-[a-z0-9]+)*$" }
+        timezone: { $ref: "#/components/schemas/Timezone" }
+        owner_email: { $ref: "#/components/schemas/Email" }
+    CreateTenantResponse:
+      type: object
+      additionalProperties: false
+      required: [tenant, owner_invitation]
+      properties:
+        tenant: { $ref: "#/components/schemas/Tenant" }
+        owner_invitation: { $ref: "#/components/schemas/Invitation" }
+    PlatformUpdateTenantRequest:
+      type: object
+      additionalProperties: false
+      required: [status]
+      properties:
+        status: { type: string, enum: [active, suspended, closed] }
