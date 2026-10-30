@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: KZ Moto System API
-  version: 0.5.0
+  version: 0.6.0
   summary: Multi-tenant management API for automotive repair shops.
   description: |
     REST API consumed directly by the web frontend (no BFF).
@@ -63,6 +63,10 @@ tags:
     description: Parts and services catalogue.
   - name: inventory
     description: Storage places, balances, ledger, adjustments and transfers.
+  - name: purchasing
+    description: Purchase orders, NF-e import, review and confirmation.
+  - name: finance
+    description: Accounts payable (payments in a later phase).
 paths:
   /healthz:
     get:
@@ -3282,6 +3286,433 @@ paths:
         "415": { $ref: "#/components/responses/UnsupportedMediaType" }
         "422": { $ref: "#/components/responses/ValidationFailed" }
 
+  /api/v1/tenants/{tenantID}/purchase-orders:
+    get:
+      operationId: listPurchaseOrders
+      tags: [purchasing]
+      summary: "Purchase orders"
+      description: "Requires `purchasing.read`."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/PurchaseOrderStatus"
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PurchaseOrderList"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+    post:
+      operationId: createPurchaseOrder
+      tags: [purchasing]
+      summary: "Create a draft purchase order"
+      description: "Requires `purchasing.manage`. Numbered per location (e.g. SP01-PC-000001). Goods are received by confirming supplier invoices linked to the order."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PurchaseOrderRequest"
+      responses:
+        "201":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PurchaseOrder"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+  /api/v1/tenants/{tenantID}/purchase-orders/{orderID}:
+    get:
+      operationId: getPurchaseOrder
+      tags: [purchasing]
+      summary: "A purchase order with items"
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/OrderID"
+      responses:
+        "200":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PurchaseOrder"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/tenants/{tenantID}/purchase-orders/{orderID}/items:
+    put:
+      operationId: replacePurchaseOrderItems
+      tags: [purchasing]
+      summary: "Replace the items of a draft order"
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/OrderID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PurchaseOrderItemsRequest"
+      responses:
+        "200":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PurchaseOrder"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+  /api/v1/tenants/{tenantID}/purchase-orders/{orderID}/send:
+    post:
+      operationId: sendPurchaseOrder
+      tags: [purchasing]
+      summary: "Mark a draft order as sent to the supplier"
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/OrderID"
+      responses:
+        "200":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PurchaseOrder"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+  /api/v1/tenants/{tenantID}/purchase-orders/{orderID}/cancel:
+    post:
+      operationId: cancelPurchaseOrder
+      tags: [purchasing]
+      summary: "Cancel a draft or sent order"
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/OrderID"
+      responses:
+        "200":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PurchaseOrder"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+  /api/v1/tenants/{tenantID}/supplier-invoices:
+    get:
+      operationId: listSupplierInvoices
+      tags: [purchasing]
+      summary: "Supplier invoices"
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/InvoiceStatus"
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SupplierInvoiceList"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+  /api/v1/tenants/{tenantID}/supplier-invoices/import:
+    post:
+      operationId: importSupplierInvoice
+      tags: [purchasing]
+      summary: "Import an NF-e XML as a draft for review"
+      description: "Requires `purchasing.receive`. Send the raw XML (application/xml, up to the API body limit). DOCTYPE/entities, deep nesting and non-55 models are rejected. Nothing is posted until confirmation; lines are matched to products by learned supplier codes or EAN. A repeated access key returns `409 invoice_already_imported`."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/ImportLocation"
+      requestBody:
+        required: true
+        content:
+          application/xml:
+            schema: { type: string, format: binary }
+      responses:
+        "201":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SupplierInvoice"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+  /api/v1/tenants/{tenantID}/supplier-invoices/{invoiceID}:
+    get:
+      operationId: getSupplierInvoice
+      tags: [purchasing]
+      summary: "An invoice with lines and installments"
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/InvoiceID"
+      responses:
+        "200":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SupplierInvoice"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    patch:
+      operationId: reviewSupplierInvoice
+      tags: [purchasing]
+      summary: "Set destination, supplier and purchase order of a draft"
+      description: "Send the current `version`."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/InvoiceID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SupplierInvoiceReviewRequest"
+      responses:
+        "200":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SupplierInvoice"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+  /api/v1/tenants/{tenantID}/supplier-invoices/{invoiceID}/items/{itemID}:
+    patch:
+      operationId: matchSupplierInvoiceItem
+      tags: [purchasing]
+      summary: "Match a line to a product (with units per supplier unit)"
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/InvoiceID"
+        - $ref: "#/components/parameters/ItemID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SupplierInvoiceMatchRequest"
+      responses:
+        "200":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SupplierInvoice"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+  /api/v1/tenants/{tenantID}/supplier-invoices/{invoiceID}/installments:
+    put:
+      operationId: setSupplierInvoiceInstallments
+      tags: [purchasing]
+      summary: "Replace the payment schedule of a draft"
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/InvoiceID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SupplierInvoiceInstallmentsRequest"
+      responses:
+        "200":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SupplierInvoice"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+  /api/v1/tenants/{tenantID}/supplier-invoices/{invoiceID}/confirm:
+    post:
+      operationId: confirmSupplierInvoice
+      tags: [purchasing]
+      summary: "Confirm: post stock, cost, order receipts and payables once"
+      description: "Idempotent: confirming again returns the confirmed invoice. Header freight, insurance and other costs are allocated by line value, the discount likewise, and line IPI/ICMS-ST added, to give the landed unit cost that revalues the average cost."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/InvoiceID"
+      responses:
+        "200":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SupplierInvoice"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+  /api/v1/tenants/{tenantID}/supplier-invoices/{invoiceID}/cancel:
+    post:
+      operationId: cancelSupplierInvoice
+      tags: [purchasing]
+      summary: "Cancel a draft or reverse a confirmed invoice"
+      description: "Reversal removes the stock again (409 insufficient_stock if consumed), undoes order receipts and cancels open payables; refused when a payable is paid."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/InvoiceID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CancelRequest"
+      responses:
+        "200":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SupplierInvoice"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+  /api/v1/tenants/{tenantID}/accounts-payable:
+    get:
+      operationId: listAccountsPayable
+      tags: [finance]
+      summary: "Accounts payable by due date"
+      description: "Requires `finance.read`. Created by confirming supplier invoices."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/PayableStatus"
+        - $ref: "#/components/parameters/PayableInvoiceFilter"
+        - $ref: "#/components/parameters/DueBefore"
+      responses:
+        "200":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AccountPayableList"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+
 components:
   securitySchemes:
     bearerAuth:
@@ -3300,6 +3731,42 @@ components:
         type: integer
         minimum: 1
   parameters:
+    OrderID:
+      name: orderID
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    InvoiceID:
+      name: invoiceID
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    ImportLocation:
+      name: location_id
+      in: query
+      required: true
+      description: Receiving location.
+      schema: { type: string, format: uuid }
+    PayableInvoiceFilter:
+      name: supplier_invoice_id
+      in: query
+      schema: { type: string, format: uuid }
+    DueBefore:
+      name: due_before
+      in: query
+      schema: { type: string, format: date }
+    PurchaseOrderStatus:
+      name: status
+      in: query
+      schema: { type: string, enum: [draft, sent, partially_received, received, cancelled] }
+    InvoiceStatus:
+      name: status
+      in: query
+      schema: { type: string, enum: [draft, confirmed, cancelled] }
+    PayableStatus:
+      name: status
+      in: query
+      schema: { type: string, enum: [open, paid, cancelled] }
     CategoryID:
       name: categoryID
       in: path
@@ -3662,6 +4129,192 @@ components:
           schema:
             $ref: "#/components/schemas/Error"
   schemas:
+    PurchaseOrderItem:
+      type: object
+      additionalProperties: false
+      required: [product_id, quantity, unit_cost]
+      properties:
+        product_id: { type: string, format: uuid }
+        sku: { type: string }
+        product_name: { type: string }
+        quantity: { type: [string, number] }
+        received_quantity: { type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
+        unit_cost: { type: [string, number] }
+    PurchaseOrder:
+      type: object
+      additionalProperties: false
+      required: [id, code, location_id, supplier_party_id, status, expected_at, notes, total, version, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        code: { type: string }
+        location_id: { type: string, format: uuid }
+        supplier_party_id: { type: string, format: uuid }
+        supplier_name: { type: string }
+        status: { type: string }
+        expected_at: { type: [string, "null"], format: date }
+        notes: { type: [string, "null"] }
+        total: { type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
+        items: { type: array, items: { $ref: "#/components/schemas/PurchaseOrderItem" } }
+        version: { type: integer }
+        created_at: { type: string, format: date-time }
+    PurchaseOrderList:
+      type: object
+      additionalProperties: false
+      required: [items, next_cursor]
+      properties:
+        items: { type: array, items: { $ref: "#/components/schemas/PurchaseOrder" } }
+        next_cursor: { $ref: "#/components/schemas/NextCursor" }
+    PurchaseOrderItemInput:
+      type: object
+      additionalProperties: false
+      required: [product_id, quantity, unit_cost]
+      properties:
+        product_id: { type: string, format: uuid }
+        quantity: { type: [string, number] }
+        unit_cost: { type: [string, number] }
+    PurchaseOrderRequest:
+      type: object
+      additionalProperties: false
+      required: [location_id, supplier_party_id, items]
+      properties:
+        location_id: { type: string, format: uuid }
+        supplier_party_id: { type: string, format: uuid }
+        expected_at: { type: [string, "null"], format: date }
+        notes: { type: [string, "null"] }
+        items: { type: array, minItems: 1, maxItems: 500, items: { $ref: "#/components/schemas/PurchaseOrderItemInput" } }
+    PurchaseOrderItemsRequest:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items: { type: array, minItems: 1, maxItems: 500, items: { $ref: "#/components/schemas/PurchaseOrderItemInput" } }
+    SupplierInvoiceItem:
+      type: object
+      additionalProperties: false
+      required: [id, position, supplier_code, description, ean, ncm, cfop, unit, quantity, unit_price, total, ipi_value, icms_st_value, product_id, sku, product_name, unit_factor]
+      properties:
+        id: { type: string, format: uuid }
+        position: { type: integer }
+        supplier_code: { type: string }
+        description: { type: string }
+        ean: { type: [string, "null"] }
+        ncm: { type: [string, "null"] }
+        cfop: { type: [string, "null"] }
+        unit: { type: string }
+        quantity: { type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
+        unit_price: { type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
+        total: { type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
+        ipi_value: { type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
+        icms_st_value: { type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
+        product_id: { type: [string, "null"], format: uuid }
+        sku: { type: [string, "null"] }
+        product_name: { type: [string, "null"] }
+        unit_factor: { type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
+    SupplierInvoiceInstallment:
+      type: object
+      additionalProperties: false
+      required: [due_date, amount]
+      properties:
+        number: { type: integer }
+        due_date: { type: string, format: date }
+        amount: { type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
+    SupplierInvoice:
+      type: object
+      additionalProperties: false
+      required: [id, location_id, stock_location_id, legal_entity_id, supplier_party_id, supplier_name, purchase_order_id, access_key, number, series, issued_at, emitter_cnpj, emitter_name, products_total, freight, insurance, other_costs, discount, ipi_total, icms_st_total, total, status, confirmed_at, cancelled_at, cancel_reason, version, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        location_id: { type: string, format: uuid }
+        stock_location_id: { type: [string, "null"], format: uuid }
+        legal_entity_id: { type: [string, "null"], format: uuid }
+        supplier_party_id: { type: [string, "null"], format: uuid }
+        supplier_name: { type: [string, "null"] }
+        purchase_order_id: { type: [string, "null"], format: uuid }
+        access_key: { type: string, pattern: "^[0-9]{44}$" }
+        number: { type: string }
+        series: { type: string }
+        issued_at: { type: string, format: date-time }
+        emitter_cnpj: { type: string }
+        emitter_name: { type: string }
+        products_total: { type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
+        freight: { type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
+        insurance: { type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
+        other_costs: { type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
+        discount: { type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
+        ipi_total: { type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
+        icms_st_total: { type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
+        total: { type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
+        status: { type: string, enum: [draft, confirmed, cancelled] }
+        confirmed_at: { type: [string, "null"], format: date-time }
+        cancelled_at: { type: [string, "null"], format: date-time }
+        cancel_reason: { type: [string, "null"] }
+        items: { type: array, items: { $ref: "#/components/schemas/SupplierInvoiceItem" } }
+        installments: { type: array, items: { $ref: "#/components/schemas/SupplierInvoiceInstallment" } }
+        version: { type: integer }
+        created_at: { type: string, format: date-time }
+    SupplierInvoiceList:
+      type: object
+      additionalProperties: false
+      required: [items, next_cursor]
+      properties:
+        items: { type: array, items: { $ref: "#/components/schemas/SupplierInvoice" } }
+        next_cursor: { $ref: "#/components/schemas/NextCursor" }
+    SupplierInvoiceReviewRequest:
+      type: object
+      additionalProperties: false
+      required: [version]
+      properties:
+        version: { type: integer, minimum: 1 }
+        stock_location_id: { type: [string, "null"], format: uuid }
+        supplier_party_id: { type: [string, "null"], format: uuid }
+        purchase_order_id: { type: [string, "null"], format: uuid }
+    SupplierInvoiceMatchRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        product_id: { type: [string, "null"], format: uuid }
+        unit_factor: { type: [string, number, "null"], description: "Internal units per supplier unit (default 1)." }
+    InstallmentInput:
+      type: object
+      additionalProperties: false
+      required: [due_date, amount]
+      properties:
+        due_date: { type: string, format: date }
+        amount: { type: [string, number] }
+    SupplierInvoiceInstallmentsRequest:
+      type: object
+      additionalProperties: false
+      required: [installments]
+      properties:
+        installments: { type: array, minItems: 1, maxItems: 120, items: { $ref: "#/components/schemas/InstallmentInput" } }
+    CancelRequest:
+      type: object
+      additionalProperties: false
+      required: [reason]
+      properties:
+        reason: { type: string, minLength: 3, maxLength: 500 }
+    AccountPayable:
+      type: object
+      additionalProperties: false
+      required: [id, supplier_party_id, supplier_name, supplier_invoice_id, installment_number, description, due_date, amount, status, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        supplier_party_id: { type: string, format: uuid }
+        supplier_name: { type: string }
+        supplier_invoice_id: { type: string, format: uuid }
+        installment_number: { type: integer }
+        description: { type: string }
+        due_date: { type: string, format: date }
+        amount: { type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
+        status: { type: string, enum: [open, paid, cancelled] }
+        created_at: { type: string, format: date-time }
+    AccountPayableList:
+      type: object
+      additionalProperties: false
+      required: [items, next_cursor]
+      properties:
+        items: { type: array, items: { $ref: "#/components/schemas/AccountPayable" } }
+        next_cursor: { $ref: "#/components/schemas/NextCursor" }
     ProductCategory:
       type: object
       additionalProperties: false
@@ -4120,6 +4773,9 @@ components:
         unit_cost: { type: [string, "null"], pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
         line_total: { type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
         status: { type: string, enum: [proposed, approved, declined, done, cancelled] }
+        product_id: { type: [string, "null"], format: uuid }
+        stock_location_id: { type: [string, "null"], format: uuid }
+        reserved_quantity: { type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
     WorkOrderTechnician:
       type: object
       additionalProperties: false
@@ -4198,7 +4854,8 @@ components:
     WorkOrderItemRequest:
       type: object
       additionalProperties: false
-      required: [item_type, description, quantity, unit_price]
+      required: [item_type, quantity]
+      description: "With `product_id`, description, reference code and unit price default to the product. Stock-tracked products need `stock_location_id`; approval reserves stock and completion consumes it."
       properties:
         item_type: { type: string, enum: [part, labor, service, fee] }
         description: { type: string }
@@ -4207,6 +4864,8 @@ components:
         unit_price: { type: [string, number] }
         discount: { type: [string, number] }
         unit_cost: { type: [string, number, "null"] }
+        product_id: { type: [string, "null"], format: uuid }
+        stock_location_id: { type: [string, "null"], format: uuid }
     WorkOrderItemPatchRequest:
       type: object
       additionalProperties: false
