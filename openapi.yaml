@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: KZ Moto System API
-  version: 0.8.0
+  version: 0.9.0
   summary: Multi-tenant management API for automotive repair shops.
   description: |
     REST API consumed directly by the web frontend (no BFF).
@@ -73,6 +73,8 @@ tags:
     description: Cash registers and sessions (blind closing).
   - name: sales
     description: Point of sale, checkout and cancellation.
+  - name: reports
+    description: Bounded, tenant- and location-scoped reports (JSON or CSV).
 paths:
   /healthz:
     get:
@@ -491,10 +493,16 @@ paths:
       operationId: listAuditLogs
       tags: [tenants]
       summary: The tenant's audit log
-      description: "Requires `audit.read`."
+      description: "Requires `audit.read`. Append-only; filters by action, entity, actor and period."
       security: [{ bearerAuth: [] }]
       parameters:
         - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/AuditAction"
+        - $ref: "#/components/parameters/AuditEntityType"
+        - $ref: "#/components/parameters/AuditEntityID"
+        - $ref: "#/components/parameters/AuditActor"
+        - $ref: "#/components/parameters/AuditFrom"
+        - $ref: "#/components/parameters/AuditTo"
         - $ref: "#/components/parameters/Limit"
         - $ref: "#/components/parameters/Cursor"
       responses:
@@ -4934,6 +4942,149 @@ paths:
         "415": { $ref: "#/components/responses/UnsupportedMediaType" }
         "422": { $ref: "#/components/responses/ValidationFailed" }
 
+  /api/v1/tenants/{tenantID}/reports/sales:
+    get:
+      operationId: reportSales
+      tags: [reports]
+      summary: "Sales by day, location and payment method"
+      description: "Requires `reports.read`. Completed sales by local completion date (location timezone); period up to 366 days."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/ReportFrom"
+        - $ref: "#/components/parameters/ReportTo"
+        - $ref: "#/components/parameters/LocationFilter"
+        - $ref: "#/components/parameters/ReportFormat"
+      responses:
+        "200":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SalesReport"
+            text/csv:
+              schema: { type: string, description: "UTF-8 with BOM; formula-like cells are prefixed with a quote." }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+  /api/v1/tenants/{tenantID}/reports/work-orders:
+    get:
+      operationId: reportWorkOrders
+      tags: [reports]
+      summary: "Work orders by status and deliveries"
+      description: "Requires `reports.read`. Created by status and delivered (revenue, parts cost, ticket, hours to delivery)."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/ReportFrom"
+        - $ref: "#/components/parameters/ReportTo"
+        - $ref: "#/components/parameters/LocationFilter"
+        - $ref: "#/components/parameters/ReportFormat"
+      responses:
+        "200":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkOrdersReport"
+            text/csv:
+              schema: { type: string, description: "UTF-8 with BOM; formula-like cells are prefixed with a quote." }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+  /api/v1/tenants/{tenantID}/reports/inventory:
+    get:
+      operationId: reportInventory
+      tags: [reports]
+      summary: "Stock position valued at average cost"
+      description: "Requires `reports.read`. Snapshot of non-zero balances (at most 5000 rows, see truncated); stale = no movement for 90 days."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/LocationFilter"
+        - $ref: "#/components/parameters/ReportFormat"
+      responses:
+        "200":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InventoryReport"
+            text/csv:
+              schema: { type: string, description: "UTF-8 with BOM; formula-like cells are prefixed with a quote." }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+  /api/v1/tenants/{tenantID}/reports/finance:
+    get:
+      operationId: reportFinance
+      tags: [reports]
+      summary: "Cash flow and open titles by due bucket"
+      description: "Requires `reports.read` and `locations.access_all`. Cash flow by cash date; open titles relative to today."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/ReportFrom"
+        - $ref: "#/components/parameters/ReportTo"
+        - $ref: "#/components/parameters/ReportFormat"
+      responses:
+        "200":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FinanceReport"
+            text/csv:
+              schema: { type: string, description: "UTF-8 with BOM; formula-like cells are prefixed with a quote." }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+  /api/v1/tenants/{tenantID}/reports/cash:
+    get:
+      operationId: reportCash
+      tags: [reports]
+      summary: "Cash sessions with movements and differences"
+      description: "Requires `reports.read`. Sessions opened in the period (local date)."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/ReportFrom"
+        - $ref: "#/components/parameters/ReportTo"
+        - $ref: "#/components/parameters/LocationFilter"
+        - $ref: "#/components/parameters/ReportFormat"
+      responses:
+        "200":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CashReport"
+            text/csv:
+              schema: { type: string, description: "UTF-8 with BOM; formula-like cells are prefixed with a quote." }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+
 components:
   securitySchemes:
     bearerAuth:
@@ -4952,6 +5103,46 @@ components:
         type: integer
         minimum: 1
   parameters:
+    ReportFrom:
+      name: from
+      in: query
+      required: true
+      description: First local date (YYYY-MM-DD).
+      schema: { type: string, format: date }
+    ReportTo:
+      name: to
+      in: query
+      required: true
+      description: Last local date (YYYY-MM-DD), at most 366 days after from.
+      schema: { type: string, format: date }
+    ReportFormat:
+      name: format
+      in: query
+      schema: { type: string, enum: [json, csv] }
+    AuditAction:
+      name: action
+      in: query
+      schema: { type: string, maxLength: 80 }
+    AuditEntityType:
+      name: entity_type
+      in: query
+      schema: { type: string, maxLength: 80 }
+    AuditEntityID:
+      name: entity_id
+      in: query
+      schema: { type: string, format: uuid }
+    AuditActor:
+      name: actor_user_id
+      in: query
+      schema: { type: string, format: uuid }
+    AuditFrom:
+      name: from
+      in: query
+      schema: { type: string, format: date-time }
+    AuditTo:
+      name: to
+      in: query
+      schema: { type: string, format: date-time }
     RegisterID:
       name: registerID
       in: path
@@ -5426,6 +5617,161 @@ components:
           schema:
             $ref: "#/components/schemas/Error"
   schemas:
+    ReportPeriod:
+      type: object
+      additionalProperties: false
+      required: [basis, note]
+      properties:
+        basis: { type: string }
+        from: { type: string, format: date }
+        to: { type: string, format: date }
+        note: { type: string }
+    SalesReportDay:
+      type: object
+      additionalProperties: false
+      required: [day, location_id, location_code, sales, gross, discounts, net, cost, margin]
+      properties:
+        day: { type: string, format: date }
+        location_id: { type: string, format: uuid }
+        location_code: { type: string }
+        sales: { type: integer }
+        gross: { type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
+        discounts: { type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
+        net: { type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
+        cost: { type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
+        margin: { type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
+    SalesReportMethod:
+      type: object
+      additionalProperties: false
+      required: [method, payments, amount, fees]
+      properties:
+        method: { type: string }
+        payments: { type: integer }
+        amount: { type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
+        fees: { type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
+    SalesReport:
+      type: object
+      additionalProperties: false
+      required: [period, days, by_payment_method, total_net, total_cost]
+      properties:
+        period: { $ref: "#/components/schemas/ReportPeriod" }
+        days: { type: array, items: { $ref: "#/components/schemas/SalesReportDay" } }
+        by_payment_method: { type: array, items: { $ref: "#/components/schemas/SalesReportMethod" } }
+        total_net: { type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
+        total_cost: { type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
+    WorkOrdersReportStatus:
+      type: object
+      additionalProperties: false
+      required: [location_id, location_code, status, orders, approved_total]
+      properties:
+        location_id: { type: string, format: uuid }
+        location_code: { type: string }
+        status: { type: string }
+        orders: { type: integer }
+        approved_total: { type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
+    WorkOrdersReportDelivered:
+      type: object
+      additionalProperties: false
+      required: [location_id, location_code, delivered, revenue, parts_cost, average_ticket, avg_hours_to_delivery]
+      properties:
+        location_id: { type: string, format: uuid }
+        location_code: { type: string }
+        delivered: { type: integer }
+        revenue: { type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
+        parts_cost: { type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
+        average_ticket: { type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
+        avg_hours_to_delivery: { type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
+    WorkOrdersReport:
+      type: object
+      additionalProperties: false
+      required: [period, created_by_status, delivered]
+      properties:
+        period: { $ref: "#/components/schemas/ReportPeriod" }
+        created_by_status: { type: array, items: { $ref: "#/components/schemas/WorkOrdersReportStatus" } }
+        delivered: { type: array, items: { $ref: "#/components/schemas/WorkOrdersReportDelivered" } }
+    InventoryReportRow:
+      type: object
+      additionalProperties: false
+      required: [location_code, stock_location_id, stock_location_code, product_id, sku, product_name, quantity, reserved, average_cost, value, last_movement_at, stale]
+      properties:
+        location_code: { type: string }
+        stock_location_id: { type: string, format: uuid }
+        stock_location_code: { type: string }
+        product_id: { type: string, format: uuid }
+        sku: { type: string }
+        product_name: { type: string }
+        quantity: { type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
+        reserved: { type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
+        average_cost: { type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
+        value: { type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
+        last_movement_at: { type: string, format: date-time }
+        stale: { type: boolean }
+    InventoryReport:
+      type: object
+      additionalProperties: false
+      required: [period, rows, total_value, truncated]
+      properties:
+        period: { $ref: "#/components/schemas/ReportPeriod" }
+        rows: { type: array, items: { $ref: "#/components/schemas/InventoryReportRow" } }
+        total_value: { type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
+        truncated: { type: boolean }
+    CashFlowRow:
+      type: object
+      additionalProperties: false
+      required: [day, account_id, account_name, category_id, category_name, inflow, outflow]
+      properties:
+        day: { type: string, format: date }
+        account_id: { type: string, format: uuid }
+        account_name: { type: string }
+        category_id: { type: [string, "null"], format: uuid }
+        category_name: { type: [string, "null"] }
+        inflow: { type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
+        outflow: { type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
+    DueBucket:
+      type: object
+      additionalProperties: false
+      required: [kind, bucket, titles, open_amount]
+      properties:
+        kind: { type: string, enum: [payable, receivable] }
+        bucket: { type: string, enum: [overdue, next_30_days, later] }
+        titles: { type: integer }
+        open_amount: { type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
+    FinanceReport:
+      type: object
+      additionalProperties: false
+      required: [period, cash_flow, total_inflow, total_outflow, open_titles]
+      properties:
+        period: { $ref: "#/components/schemas/ReportPeriod" }
+        cash_flow: { type: array, items: { $ref: "#/components/schemas/CashFlowRow" } }
+        total_inflow: { type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
+        total_outflow: { type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
+        open_titles: { type: array, items: { $ref: "#/components/schemas/DueBucket" } }
+    CashReportSession:
+      type: object
+      additionalProperties: false
+      required: [session_id, register_name, location_code, status, opened_at, closed_at, opening_amount, sales, refunds, supplies, withdrawals, expected_amount, counted_amount, difference]
+      properties:
+        session_id: { type: string, format: uuid }
+        register_name: { type: string }
+        location_code: { type: string }
+        status: { type: string }
+        opened_at: { type: string, format: date-time }
+        closed_at: { type: [string, "null"], format: date-time }
+        opening_amount: { type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
+        sales: { type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
+        refunds: { type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
+        supplies: { type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
+        withdrawals: { type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
+        expected_amount: { type: [string, "null"], pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
+        counted_amount: { type: [string, "null"], pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
+        difference: { type: [string, "null"], pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
+    CashReport:
+      type: object
+      additionalProperties: false
+      required: [period, sessions]
+      properties:
+        period: { $ref: "#/components/schemas/ReportPeriod" }
+        sessions: { type: array, items: { $ref: "#/components/schemas/CashReportSession" } }
     TenantSettings:
       type: object
       additionalProperties: false
