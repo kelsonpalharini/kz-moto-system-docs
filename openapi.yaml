@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: KZ Moto System API
-  version: 0.7.0
+  version: 0.8.0
   summary: Multi-tenant management API for automotive repair shops.
   description: |
     REST API consumed directly by the web frontend (no BFF).
@@ -67,6 +67,12 @@ tags:
     description: Purchase orders, NF-e import, review and confirmation.
   - name: finance
     description: Accounts, categories, ledger, transfers, payables and receivables.
+  - name: settings
+    description: Tenant business settings.
+  - name: cash
+    description: Cash registers and sessions (blind closing).
+  - name: sales
+    description: Point of sale, checkout and cancellation.
 paths:
   /healthz:
     get:
@@ -4417,6 +4423,517 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
 
+  /api/v1/tenants/{tenantID}/settings:
+    get:
+      operationId: getSettings
+      tags: [settings]
+      summary: "Business settings"
+      description: "Requires `settings.manage`."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+      responses:
+        "200":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TenantSettings"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    patch:
+      operationId: updateSettings
+      tags: [settings]
+      summary: "Update business settings"
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TenantSettingsPatchRequest"
+      responses:
+        "200":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TenantSettings"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+  /api/v1/tenants/{tenantID}/cash-registers:
+    get:
+      operationId: listCashRegisters
+      tags: [cash]
+      summary: "Cash registers with their open session"
+      description: "Requires `cash.open`."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+      responses:
+        "200":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CashRegisterList"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+    post:
+      operationId: createCashRegister
+      tags: [cash]
+      summary: "Create a register bound to a cash account"
+      description: "Requires `cash.adjust`."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CashRegisterRequest"
+      responses:
+        "201":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CashRegister"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+  /api/v1/tenants/{tenantID}/cash-registers/{registerID}/sessions/open:
+    post:
+      operationId: openCashSession
+      tags: [cash]
+      summary: "Open a session (one open session per register)"
+      description: "Requires `cash.open`. A second open session for the register returns `409 session_already_open`."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/RegisterID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CashOpenRequest"
+      responses:
+        "201":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CashSession"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+  /api/v1/tenants/{tenantID}/cash-sessions:
+    get:
+      operationId: listCashSessions
+      tags: [cash]
+      summary: "Cash sessions"
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/RegisterFilter"
+        - $ref: "#/components/parameters/SessionStatus"
+      responses:
+        "200":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CashSessionList"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+  /api/v1/tenants/{tenantID}/cash-sessions/{sessionID}:
+    get:
+      operationId: getCashSession
+      tags: [cash]
+      summary: "A cash session"
+      description: "Blind view: expected amount, difference and movements are returned only to members with `cash.adjust`."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/SessionID"
+      responses:
+        "200":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CashSession"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/tenants/{tenantID}/cash-sessions/{sessionID}/movements:
+    post:
+      operationId: addCashMovement
+      tags: [cash]
+      summary: "Supply or withdrawal (paired with another account)"
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/SessionID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CashMovementRequest"
+      responses:
+        "201":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CashSession"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+  /api/v1/tenants/{tenantID}/cash-sessions/{sessionID}/close:
+    post:
+      operationId: closeCashSession
+      tags: [cash]
+      summary: "Blind close with the counted amount"
+      description: "Requires `cash.close`. The difference is posted to the ledger (cash differences) and flagged in the audit log above the tenant alert."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/SessionID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CashCloseRequest"
+      responses:
+        "200":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CashSession"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+  /api/v1/tenants/{tenantID}/cash-sessions/{sessionID}/summary:
+    get:
+      operationId: getCashSessionSummary
+      tags: [cash]
+      summary: "Full session view with expected amount and difference"
+      description: "Requires `cash.adjust`."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/SessionID"
+      responses:
+        "200":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CashSession"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/tenants/{tenantID}/sales:
+    get:
+      operationId: listSales
+      tags: [sales]
+      summary: "Sales"
+      description: "Requires `sales.read`."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/SaleStatus"
+        - $ref: "#/components/parameters/LocationFilter"
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SaleList"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+    post:
+      operationId: createSale
+      tags: [sales]
+      summary: "Open a draft sale"
+      description: "Requires `sales.create`. Numbered per location (e.g. SP01-VD-000001)."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SaleRequest"
+      responses:
+        "201":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Sale"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+  /api/v1/tenants/{tenantID}/sales/{saleID}:
+    get:
+      operationId: getSale
+      tags: [sales]
+      summary: "A sale with items and payments"
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/SaleID"
+      responses:
+        "200":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Sale"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/tenants/{tenantID}/sales/{saleID}/items:
+    post:
+      operationId: addSaleItem
+      tags: [sales]
+      summary: "Add a product line to a draft"
+      description: "Prices default to the product. Discounts need `sales.discount` up to the tenant cap (percent of the line) and `sales.discount_unlimited` above it."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/SaleID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SaleItemRequest"
+      responses:
+        "201":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Sale"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+  /api/v1/tenants/{tenantID}/sales/{saleID}/items/{itemID}:
+    patch:
+      operationId: updateSaleItem
+      tags: [sales]
+      summary: "Change quantity, price or discount of a draft line"
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/SaleID"
+        - $ref: "#/components/parameters/ItemID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SaleItemPatchRequest"
+      responses:
+        "200":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Sale"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+    delete:
+      operationId: removeSaleItem
+      tags: [sales]
+      summary: "Remove a draft line"
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/SaleID"
+        - $ref: "#/components/parameters/ItemID"
+      responses:
+        "200":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Sale"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /api/v1/tenants/{tenantID}/sales/{saleID}/checkout:
+    post:
+      operationId: checkoutSale
+      tags: [sales]
+      summary: "Pay and complete a draft sale atomically"
+      description: "Requires an `Idempotency-Key`; retrying returns the completed sale. Payments must add up to the total. Stock leaves at average cost; cash (needs an open session) and PIX post to the ledger; card installments become receivables from the acquirer net of its fee (D+1 debit, D+30 per credit installment); store credit becomes monthly receivables from the customer."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/SaleID"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CheckoutRequest"
+      responses:
+        "200":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Sale"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+  /api/v1/tenants/{tenantID}/sales/{saleID}/cancel:
+    post:
+      operationId: cancelSale
+      tags: [sales]
+      summary: "Cancel a draft or reverse a completed sale"
+      description: "Completed sales need `sales.cancel`: stock returns, cash (through an open session of the same cash account) and PIX are reversed, and receivables are cancelled; refused when a receivable has payments."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/SaleID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SaleCancelRequest"
+      responses:
+        "200":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Sale"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+
 components:
   securitySchemes:
     bearerAuth:
@@ -4435,6 +4952,28 @@ components:
         type: integer
         minimum: 1
   parameters:
+    RegisterID:
+      name: registerID
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    SaleID:
+      name: saleID
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    RegisterFilter:
+      name: register_id
+      in: query
+      schema: { type: string, format: uuid }
+    SessionStatus:
+      name: status
+      in: query
+      schema: { type: string, enum: [open, closed] }
+    SaleStatus:
+      name: status
+      in: query
+      schema: { type: string, enum: [draft, completed, cancelled] }
     AccountID:
       name: accountID
       in: path
@@ -4887,6 +5426,217 @@ components:
           schema:
             $ref: "#/components/schemas/Error"
   schemas:
+    TenantSettings:
+      type: object
+      additionalProperties: false
+      required: [max_discount_pct, cash_difference_alert]
+      properties:
+        max_discount_pct: { type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
+        cash_difference_alert: { type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
+    TenantSettingsPatchRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        max_discount_pct: { type: [string, number] }
+        cash_difference_alert: { type: [string, number] }
+    CashRegister:
+      type: object
+      additionalProperties: false
+      required: [id, location_id, name, account_id, active]
+      properties:
+        id: { type: string, format: uuid }
+        location_id: { type: string, format: uuid }
+        name: { type: string }
+        account_id: { type: string, format: uuid }
+        active: { type: boolean }
+        open_session_id: { type: [string, "null"], format: uuid }
+    CashRegisterList:
+      type: object
+      additionalProperties: false
+      required: [items, next_cursor]
+      properties:
+        items: { type: array, items: { $ref: "#/components/schemas/CashRegister" } }
+        next_cursor: { $ref: "#/components/schemas/NextCursor" }
+    CashRegisterRequest:
+      type: object
+      additionalProperties: false
+      required: [location_id, name, account_id]
+      properties:
+        location_id: { type: string, format: uuid }
+        name: { type: string }
+        account_id: { type: string, format: uuid }
+    CashOpenRequest:
+      type: object
+      additionalProperties: false
+      required: [opening_amount]
+      properties:
+        opening_amount: { type: [string, number] }
+    CashMovement:
+      type: object
+      additionalProperties: false
+      required: [id, movement_type, direction, amount, reason, reference_id, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        movement_type: { type: string }
+        direction: { type: string, enum: [in, out] }
+        amount: { type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
+        reason: { type: [string, "null"] }
+        reference_id: { type: [string, "null"], format: uuid }
+        created_at: { type: string, format: date-time }
+    CashSession:
+      type: object
+      additionalProperties: false
+      required: [id, register_id, register_name, location_id, status, opening_amount, opened_at, counted_amount, closed_at, closing_notes]
+      properties:
+        id: { type: string, format: uuid }
+        register_id: { type: string, format: uuid }
+        register_name: { type: string }
+        location_id: { type: string, format: uuid }
+        status: { type: string, enum: [open, closed] }
+        opening_amount: { type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
+        opened_at: { type: string, format: date-time }
+        counted_amount: { type: [string, "null"], pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
+        closed_at: { type: [string, "null"], format: date-time }
+        closing_notes: { type: [string, "null"] }
+        expected_amount: { type: [string, "null"], pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
+        difference: { type: [string, "null"], pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
+        movements: { type: array, items: { $ref: "#/components/schemas/CashMovement" } }
+    CashSessionList:
+      type: object
+      additionalProperties: false
+      required: [items, next_cursor]
+      properties:
+        items: { type: array, items: { $ref: "#/components/schemas/CashSession" } }
+        next_cursor: { $ref: "#/components/schemas/NextCursor" }
+    CashMovementRequest:
+      type: object
+      additionalProperties: false
+      required: [movement_type, amount, counter_account_id, reason]
+      properties:
+        movement_type: { type: string, enum: [supply, withdrawal] }
+        amount: { type: [string, number] }
+        counter_account_id: { type: string, format: uuid }
+        reason: { type: string }
+    CashCloseRequest:
+      type: object
+      additionalProperties: false
+      required: [counted_amount]
+      properties:
+        counted_amount: { type: [string, number] }
+        notes: { type: [string, "null"] }
+    SaleItem:
+      type: object
+      additionalProperties: false
+      required: [id, position, product_id, sku, stock_location_id, description, quantity, unit_price, discount, line_total]
+      properties:
+        id: { type: string, format: uuid }
+        position: { type: integer }
+        product_id: { type: string, format: uuid }
+        sku: { type: string }
+        stock_location_id: { type: [string, "null"], format: uuid }
+        description: { type: string }
+        quantity: { type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
+        unit_price: { type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
+        discount: { type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
+        line_total: { type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
+        unit_cost: { type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
+    SalePayment:
+      type: object
+      additionalProperties: false
+      required: [id, method, amount, installments, account_id, card_brand, nsu, authorization_code, fee_amount]
+      properties:
+        id: { type: string, format: uuid }
+        method: { type: string }
+        amount: { type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
+        installments: { type: integer }
+        account_id: { type: [string, "null"], format: uuid }
+        card_brand: { type: [string, "null"] }
+        nsu: { type: [string, "null"] }
+        authorization_code: { type: [string, "null"] }
+        fee_amount: { type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
+    Sale:
+      type: object
+      additionalProperties: false
+      required: [id, code, location_id, party_id, party_name, seller_membership_id, status, subtotal, discount_total, total, notes, cash_session_id, completed_at, cancelled_at, cancel_reason, version, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        code: { type: string }
+        location_id: { type: string, format: uuid }
+        party_id: { type: [string, "null"], format: uuid }
+        party_name: { type: [string, "null"] }
+        seller_membership_id: { type: [string, "null"], format: uuid }
+        status: { type: string, enum: [draft, completed, cancelled] }
+        subtotal: { type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
+        discount_total: { type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
+        total: { type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
+        notes: { type: [string, "null"] }
+        cash_session_id: { type: [string, "null"], format: uuid }
+        completed_at: { type: [string, "null"], format: date-time }
+        cancelled_at: { type: [string, "null"], format: date-time }
+        cancel_reason: { type: [string, "null"] }
+        items: { type: array, items: { $ref: "#/components/schemas/SaleItem" } }
+        payments: { type: array, items: { $ref: "#/components/schemas/SalePayment" } }
+        version: { type: integer }
+        created_at: { type: string, format: date-time }
+    SaleList:
+      type: object
+      additionalProperties: false
+      required: [items, next_cursor]
+      properties:
+        items: { type: array, items: { $ref: "#/components/schemas/Sale" } }
+        next_cursor: { $ref: "#/components/schemas/NextCursor" }
+    SaleRequest:
+      type: object
+      additionalProperties: false
+      required: [location_id]
+      properties:
+        location_id: { type: string, format: uuid }
+        party_id: { type: [string, "null"], format: uuid }
+        notes: { type: [string, "null"] }
+    SaleItemRequest:
+      type: object
+      additionalProperties: false
+      required: [product_id, quantity]
+      properties:
+        product_id: { type: string, format: uuid }
+        stock_location_id: { type: [string, "null"], format: uuid }
+        quantity: { type: [string, number] }
+        unit_price: { type: [string, number, "null"] }
+        discount: { type: [string, number] }
+    SaleItemPatchRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        quantity: { type: [string, number] }
+        unit_price: { type: [string, number] }
+        discount: { type: [string, number] }
+    CheckoutPayment:
+      type: object
+      additionalProperties: false
+      required: [method, amount]
+      properties:
+        method: { type: string, enum: [cash, pix, debit_card, credit_card, store_credit] }
+        amount: { type: string }
+        installments: { type: integer }
+        account_id: { type: string, format: uuid }
+        card_brand: { type: string }
+        nsu: { type: string }
+        authorization_code: { type: string }
+        first_due_date: { type: string, format: date }
+    CheckoutRequest:
+      type: object
+      additionalProperties: false
+      required: [payments]
+      properties:
+        cash_session_id: { type: string, format: uuid }
+        payments: { type: array, maxItems: 10, items: { $ref: "#/components/schemas/CheckoutPayment" } }
+    SaleCancelRequest:
+      type: object
+      additionalProperties: false
+      required: [reason]
+      properties:
+        reason: { type: string, minLength: 3, maxLength: 500 }
+        cash_session_id: { type: [string, "null"], format: uuid }
     FinancialAccount:
       type: object
       additionalProperties: false
@@ -5606,6 +6356,8 @@ components:
         version: { type: integer, minimum: 1 }
         status: { type: string }
         reason: { type: [string, "null"] }
+        due_date: { type: [string, "null"], format: date, description: "Work orders: first due date of the receivable created on delivery (default today)." }
+        installments: { type: integer, minimum: 0, maximum: 24, description: "Work orders: monthly installments of that receivable (default 1)." }
     InspectionTemplateItem:
       type: object
       additionalProperties: false
