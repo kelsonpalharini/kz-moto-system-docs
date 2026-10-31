@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: KZ Moto System API
-  version: 0.9.0
+  version: 0.10.0
   summary: Multi-tenant management API for automotive repair shops.
   description: |
     REST API consumed directly by the web frontend (no BFF).
@@ -5085,6 +5085,78 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
         "422": { $ref: "#/components/responses/ValidationFailed" }
 
+  /api/v1/tenants/{tenantID}/stock-minimums:
+    get:
+      operationId: listStockMinimums
+      tags: [inventory]
+      summary: "Minimum stock per storage place and product"
+      description: "Requires `inventory.read`. `below=true` keeps items whose available stock (on hand - reserved) is under the minimum; `suggested_order` is the shortfall, or the reorder quantity when larger."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/StockLocationFilter"
+        - $ref: "#/components/parameters/LocationFilter"
+        - $ref: "#/components/parameters/BelowMinimum"
+      responses:
+        "200":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StockMinimumList"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+    put:
+      operationId: setStockMinimum
+      tags: [inventory]
+      summary: "Create or change a minimum"
+      description: "Requires `inventory.adjust`. Only active stock-tracked products at accessible storage places."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StockMinimumRequest"
+      responses:
+        "200":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StockMinimum"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+  /api/v1/tenants/{tenantID}/stock-minimums/{stockLocationID}/{productID}:
+    delete:
+      operationId: deleteStockMinimum
+      tags: [inventory]
+      summary: "Remove a minimum"
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/StockLocationID"
+        - $ref: "#/components/parameters/ProductID"
+      responses:
+        "204": { $ref: "#/components/responses/NoContent" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
 components:
   securitySchemes:
     bearerAuth:
@@ -5103,6 +5175,11 @@ components:
         type: integer
         minimum: 1
   parameters:
+    BelowMinimum:
+      name: below
+      in: query
+      description: Only items under their minimum.
+      schema: { type: boolean }
     ReportFrom:
       name: from
       in: query
@@ -5617,6 +5694,43 @@ components:
           schema:
             $ref: "#/components/schemas/Error"
   schemas:
+    StockMinimum:
+      type: object
+      additionalProperties: false
+      required: [stock_location_id, stock_location_code, location_id, product_id, sku, product_name, unit, min_quantity, reorder_quantity, quantity, reserved, available, shortfall, suggested_order, below_minimum, updated_at]
+      properties:
+        stock_location_id: { type: string, format: uuid }
+        stock_location_code: { type: string }
+        location_id: { type: string, format: uuid }
+        product_id: { type: string, format: uuid }
+        sku: { type: string }
+        product_name: { type: string }
+        unit: { type: string }
+        min_quantity: { type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
+        reorder_quantity: { type: [string, "null"], pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
+        quantity: { type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
+        reserved: { type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
+        available: { type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
+        shortfall: { type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
+        suggested_order: { type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
+        below_minimum: { type: boolean }
+        updated_at: { type: string, format: date-time }
+    StockMinimumList:
+      type: object
+      additionalProperties: false
+      required: [items, next_cursor]
+      properties:
+        items: { type: array, items: { $ref: "#/components/schemas/StockMinimum" } }
+        next_cursor: { $ref: "#/components/schemas/NextCursor" }
+    StockMinimumRequest:
+      type: object
+      additionalProperties: false
+      required: [stock_location_id, product_id, min_quantity]
+      properties:
+        stock_location_id: { type: string, format: uuid }
+        product_id: { type: string, format: uuid }
+        min_quantity: { type: [string, number] }
+        reorder_quantity: { type: [string, number, "null"] }
     ReportPeriod:
       type: object
       additionalProperties: false
