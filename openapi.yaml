@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: KZ Moto System API
-  version: 0.10.0
+  version: 0.11.0
   summary: Multi-tenant management API for automotive repair shops.
   description: |
     REST API consumed directly by the web frontend (no BFF).
@@ -5157,6 +5157,221 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
 
+  /api/v1/auth/email/change:
+    post:
+      operationId: requestEmailChange
+      tags: [auth]
+      summary: "Ask to change the account e-mail"
+      description: "Verifies the current password and sends a single-use link (24 h) to the new address; the old address is notified."
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EmailChangeRequest"
+      responses:
+        "202": { description: Confirmation sent. }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+  /api/v1/auth/email/confirm:
+    post:
+      operationId: confirmEmailChange
+      tags: [auth]
+      summary: "Confirm the new e-mail with the link token"
+      description: "Switches the address and signs out every session."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EmailConfirmRequest"
+      responses:
+        "204": { $ref: "#/components/responses/NoContent" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+
+  /api/v1/tenants/{tenantID}/financial-accounts/{accountID}/statements:
+    post:
+      operationId: importStatement
+      tags: [finance]
+      summary: "Import a bank or acquirer statement (OFX or CSV)"
+      description: "Requires `finance.manage`. Raw body: OFX 1.x/2.x (`application/x-ofx`) or CSV (`text/csv`) with header data/date, descricao/description, valor/amount and optional id. Lines already imported are skipped; balances do not change. The same file twice returns 409."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/AccountID"
+      requestBody:
+        required: true
+        content:
+          application/x-ofx:
+            schema: { type: string }
+          text/csv:
+            schema: { type: string }
+      responses:
+        "201":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatementImport"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+  /api/v1/tenants/{tenantID}/financial-accounts/{accountID}/statement-lines:
+    get:
+      operationId: listStatementLines
+      tags: [finance]
+      summary: "Statement lines with match suggestions"
+      description: "Requires `finance.read`. Unmatched lines include up to 5 suggestions: ledger entries of the same account, direction and amount within 3 days, and (credits) open acquirer receivables whose net value equals the line."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/AccountID"
+        - $ref: "#/components/parameters/StatementLineStatus"
+      responses:
+        "200":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatementLineList"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+  /api/v1/tenants/{tenantID}/statement-lines/{lineID}/match:
+    post:
+      operationId: matchStatementLine
+      tags: [finance]
+      summary: "Reconcile a line"
+      description: "Requires `finance.manage`. With transaction_id: an entry of the same account, direction and amount. With receivable_id: settles the acquirer receivable into the account (gross in, fee as card_fees expense) and reconciles it."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/LineID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StatementMatchRequest"
+      responses:
+        "200":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatementLine"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+  /api/v1/tenants/{tenantID}/statement-lines/{lineID}/create-entry:
+    post:
+      operationId: createStatementLineEntry
+      tags: [finance]
+      summary: "Create a ledger entry for a line and reconcile it"
+      description: "Requires `finance.manage`. For bank fees, interest and other items without an entry."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/LineID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StatementEntryRequest"
+      responses:
+        "200":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatementLine"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+  /api/v1/tenants/{tenantID}/statement-lines/{lineID}/ignore:
+    post:
+      operationId: ignoreStatementLine
+      tags: [finance]
+      summary: "Ignore an unmatched line"
+      description: "Requires `finance.manage`."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/LineID"
+      responses:
+        "200":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatementLine"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /api/v1/tenants/{tenantID}/statement-lines/{lineID}/unmatch:
+    post:
+      operationId: unmatchStatementLine
+      tags: [finance]
+      summary: "Reopen a matched or ignored line"
+      description: "Requires `finance.manage`. Entries or settlements created by the match stay; reverse them in the ledger if wrong."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/LineID"
+      responses:
+        "200":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatementLine"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
 components:
   securitySchemes:
     bearerAuth:
@@ -5175,6 +5390,15 @@ components:
         type: integer
         minimum: 1
   parameters:
+    LineID:
+      name: lineID
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    StatementLineStatus:
+      name: status
+      in: query
+      schema: { type: string, enum: [unmatched, matched, ignored] }
     BelowMinimum:
       name: below
       in: query
@@ -5694,6 +5918,77 @@ components:
           schema:
             $ref: "#/components/schemas/Error"
   schemas:
+    StatementImport:
+      type: object
+      additionalProperties: false
+      required: [statement_id, format, period_start, period_end, imported, duplicates, file_sha256]
+      properties:
+        statement_id: { type: string, format: uuid }
+        format: { type: string, enum: [ofx, csv] }
+        period_start: { type: [string, "null"], format: date }
+        period_end: { type: [string, "null"], format: date }
+        imported: { type: integer }
+        duplicates: { type: integer }
+        file_sha256: { type: string }
+    StatementSuggestion:
+      type: object
+      additionalProperties: false
+      required: [kind, transaction_id, receivable_id, date, amount, description]
+      properties:
+        kind: { type: string, enum: [transaction, acquirer_receivable] }
+        transaction_id: { type: [string, "null"], format: uuid }
+        receivable_id: { type: [string, "null"], format: uuid }
+        date: { type: string, format: date }
+        amount: { type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
+        description: { type: string }
+    StatementLine:
+      type: object
+      additionalProperties: false
+      required: [id, statement_id, posted_on, amount, description, external_id, status, transaction_id, receivable_payment_id, matched_at, suggestions]
+      properties:
+        id: { type: string, format: uuid }
+        statement_id: { type: string, format: uuid }
+        posted_on: { type: string, format: date }
+        amount: { type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
+        description: { type: string }
+        external_id: { type: string }
+        status: { type: string, enum: [unmatched, matched, ignored] }
+        transaction_id: { type: [string, "null"], format: uuid }
+        receivable_payment_id: { type: [string, "null"], format: uuid }
+        matched_at: { type: [string, "null"], format: date-time }
+        suggestions: { type: array, items: { $ref: "#/components/schemas/StatementSuggestion" } }
+    StatementLineList:
+      type: object
+      additionalProperties: false
+      required: [items, next_cursor]
+      properties:
+        items: { type: array, items: { $ref: "#/components/schemas/StatementLine" } }
+        next_cursor: { $ref: "#/components/schemas/NextCursor" }
+    StatementMatchRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        transaction_id: { type: [string, "null"], format: uuid }
+        receivable_id: { type: [string, "null"], format: uuid }
+    StatementEntryRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        category_id: { type: [string, "null"], format: uuid }
+        description: { type: string, maxLength: 200 }
+    EmailChangeRequest:
+      type: object
+      additionalProperties: false
+      required: [current_password, new_email]
+      properties:
+        current_password: { type: string, maxLength: 256 }
+        new_email: { type: string, format: email, maxLength: 254 }
+    EmailConfirmRequest:
+      type: object
+      additionalProperties: false
+      required: [token]
+      properties:
+        token: { type: string, maxLength: 128 }
     StockMinimum:
       type: object
       additionalProperties: false
@@ -6003,7 +6298,7 @@ components:
     SalePayment:
       type: object
       additionalProperties: false
-      required: [id, method, amount, installments, account_id, card_brand, nsu, authorization_code, fee_amount]
+      required: [id, method, amount, installments, account_id, card_brand, nsu, authorization_code, fee_amount, cash_received, change]
       properties:
         id: { type: string, format: uuid }
         method: { type: string }
@@ -6014,6 +6309,8 @@ components:
         nsu: { type: [string, "null"] }
         authorization_code: { type: [string, "null"] }
         fee_amount: { type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
+        cash_received: { type: [string, "null"] }
+        change: { type: [string, "null"] }
     Sale:
       type: object
       additionalProperties: false
@@ -6083,6 +6380,7 @@ components:
         nsu: { type: string }
         authorization_code: { type: string }
         first_due_date: { type: string, format: date }
+        cash_received: { type: string, description: "Cash tendered (cash only, at least the amount); the change is returned in the sale." }
     CheckoutRequest:
       type: object
       additionalProperties: false
@@ -6251,7 +6549,7 @@ components:
     FinancialPayment:
       type: object
       additionalProperties: false
-      required: [id, account_id, amount, interest, fine, discount, paid_on, notes, transaction_id, reversed_at, created_at]
+      required: [id, account_id, amount, interest, fine, discount, fee, paid_on, notes, transaction_id, reversed_at, created_at]
       properties:
         id: { type: string, format: uuid }
         account_id: { type: string, format: uuid }
@@ -6259,6 +6557,7 @@ components:
         interest: { type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
         fine: { type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
         discount: { type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
+        fee: { type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
         paid_on: { type: string, format: date }
         notes: { type: [string, "null"] }
         transaction_id: { type: string, format: uuid }
@@ -6267,7 +6566,7 @@ components:
     FinancialTitle:
       type: object
       additionalProperties: false
-      required: [id, location_id, legal_entity_id, category_id, party_id, party_name, origin_type, origin_id, installment_number, description, due_date, amount, paid_amount, open_amount, status, paid_at, cancelled_at, version, created_at]
+      required: [id, location_id, legal_entity_id, category_id, party_id, party_name, origin_type, origin_id, installment_number, description, due_date, amount, paid_amount, open_amount, expected_fee, status, paid_at, cancelled_at, version, created_at]
       properties:
         id: { type: string, format: uuid }
         location_id: { type: string, format: uuid }
@@ -6285,6 +6584,7 @@ components:
         amount: { type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
         paid_amount: { type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
         open_amount: { type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
+        expected_fee: { type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$", description: "Card acquirer fee expected on this installment (receivables from card sales)." }
         status: { type: string, enum: [open, partially_paid, paid, cancelled] }
         paid_at: { type: [string, "null"], format: date-time }
         cancelled_at: { type: [string, "null"], format: date-time }
@@ -6320,6 +6620,7 @@ components:
         interest: { type: string }
         fine: { type: string }
         discount: { type: string }
+        fee: { type: string, description: "Card acquirer fee withheld (acquirer receivables only; defaults to the expected fee). Posted as a card_fees expense." }
         paid_on: { type: string, format: date }
         notes: { type: [string, "null"] }
     FinanceSummary:
