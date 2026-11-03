@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: KZ Moto System API
-  version: 0.11.0
+  version: 0.12.0
   summary: Multi-tenant management API for automotive repair shops.
   description: |
     REST API consumed directly by the web frontend (no BFF).
@@ -75,6 +75,10 @@ tags:
     description: Point of sale, checkout and cancellation.
   - name: reports
     description: Bounded, tenant- and location-scoped reports (JSON or CSV).
+  - name: warranties
+    description: Warranties, claims, campaigns and recalls.
+  - name: crm
+    description: Consents (LGPD), service reminders and e-mails.
 paths:
   /healthz:
     get:
@@ -5372,6 +5376,633 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
         "409": { $ref: "#/components/responses/Conflict" }
 
+  /api/v1/tenants/{tenantID}/warranties:
+    get:
+      operationId: listWarranties
+      tags: [warranties]
+      summary: "Warranties (created when a work order is delivered)"
+      description: "Requires `warranties.read`. One warranty per done item (fees excluded) with the tenant default terms."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/VehicleFilter"
+        - $ref: "#/components/parameters/WorkOrderFilter"
+        - $ref: "#/components/parameters/ActiveFilter"
+      responses:
+        "200":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WarrantyList"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+  /api/v1/tenants/{tenantID}/warranties/{warrantyID}/void:
+    post:
+      operationId: voidWarranty
+      tags: [warranties]
+      summary: "Void a warranty"
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/WarrantyID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WarrantyVoidRequest"
+      responses:
+        "200":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Warranty"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+  /api/v1/tenants/{tenantID}/warranty-claims:
+    get:
+      operationId: listWarrantyClaims
+      tags: [warranties]
+      summary: "Warranty claims"
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/ClaimStatusFilter"
+        - $ref: "#/components/parameters/WarrantyFilter"
+      responses:
+        "200":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WarrantyClaimList"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+    post:
+      operationId: openWarrantyClaim
+      tags: [warranties]
+      summary: "Open a claim on an active warranty"
+      description: "Requires `warranties.manage`. Refused for voided or expired warranties and above the mileage limit."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WarrantyClaimRequest"
+      responses:
+        "201":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WarrantyClaim"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+  /api/v1/tenants/{tenantID}/warranty-claims/{claimID}:
+    patch:
+      operationId: updateWarrantyClaim
+      tags: [warranties]
+      summary: "Move a claim (open, in_review, approved/rejected, resolved)"
+      description: "approved_amount is required to approve and resolution to resolve."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/ClaimID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WarrantyClaimUpdate"
+      responses:
+        "200":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WarrantyClaim"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+  /api/v1/tenants/{tenantID}/service-campaigns:
+    get:
+      operationId: listServiceCampaigns
+      tags: [warranties]
+      summary: "Service campaigns and recalls"
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/CampaignStatusFilter"
+      responses:
+        "200":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ServiceCampaignList"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+    post:
+      operationId: createServiceCampaign
+      tags: [warranties]
+      summary: "Create a draft campaign or recall"
+      description: "The source (bulletin, Procon, own initiative) is informed; recalls are never inferred."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ServiceCampaignRequest"
+      responses:
+        "201":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ServiceCampaign"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+  /api/v1/tenants/{tenantID}/service-campaigns/{campaignID}/activate:
+    post:
+      operationId: activateServiceCampaign
+      tags: [warranties]
+      summary: "Activate a campaign"
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/CampaignID"
+      responses:
+        "200":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ServiceCampaign"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+  /api/v1/tenants/{tenantID}/service-campaigns/{campaignID}/close:
+    post:
+      operationId: closeServiceCampaign
+      tags: [warranties]
+      summary: "Close a campaign"
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/CampaignID"
+      responses:
+        "200":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ServiceCampaign"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+  /api/v1/tenants/{tenantID}/service-campaigns/{campaignID}/vehicles:
+    get:
+      operationId: listServiceCampaignVehicles
+      tags: [warranties]
+      summary: "Eligible vehicles with current owner"
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/CampaignID"
+        - $ref: "#/components/parameters/CampaignVehicleStatusFilter"
+      responses:
+        "200":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CampaignVehicleList"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+    post:
+      operationId: addServiceCampaignVehicles
+      tags: [warranties]
+      summary: "Add eligible vehicles"
+      description: "Adds vehicles matching the campaign make, model and year range (when set) plus the listed ids."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/CampaignID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CampaignVehiclesRequest"
+      responses:
+        "200":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CampaignVehiclesAdded"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+  /api/v1/tenants/{tenantID}/service-campaigns/{campaignID}/vehicles/{vehicleID}:
+    patch:
+      operationId: setServiceCampaignVehicleStatus
+      tags: [warranties]
+      summary: "Record the outcome for a vehicle"
+      description: "done requires the work order that executed the campaign."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/CampaignID"
+        - $ref: "#/components/parameters/VehicleID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CampaignVehicleStatusRequest"
+      responses:
+        "204": { $ref: "#/components/responses/NoContent" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+  /api/v1/tenants/{tenantID}/vehicles/{vehicleID}/open-campaigns:
+    get:
+      operationId: listVehicleOpenCampaigns
+      tags: [warranties]
+      summary: "Active campaigns still pending for a vehicle"
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/VehicleID"
+      responses:
+        "200":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OpenCampaignList"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+  /api/v1/tenants/{tenantID}/parties/{partyID}/consents:
+    get:
+      operationId: listConsents
+      tags: [crm]
+      summary: "Consents of a party"
+      description: "Requires `crm.read`."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/PartyID"
+      responses:
+        "200":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConsentList"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+  /api/v1/tenants/{tenantID}/consents:
+    post:
+      operationId: grantConsent
+      tags: [crm]
+      summary: "Record a consent"
+      description: "Requires `crm.manage`. Granting an active consent again is a no-op."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ConsentRequest"
+      responses:
+        "201":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConsentList"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+  /api/v1/tenants/{tenantID}/parties/{partyID}/consents/revoke:
+    post:
+      operationId: revokeConsent
+      tags: [crm]
+      summary: "Revoke a consent"
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/PartyID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ConsentRevokeRequest"
+      responses:
+        "200":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConsentList"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+  /api/v1/tenants/{tenantID}/parties/{partyID}/crm-messages:
+    get:
+      operationId: listCrmMessages
+      tags: [crm]
+      summary: "E-mails sent to a party"
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/PartyID"
+      responses:
+        "200":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CrmMessageList"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+  /api/v1/tenants/{tenantID}/service-reminders:
+    get:
+      operationId: listServiceReminders
+      tags: [crm]
+      summary: "Service reminders"
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/ReminderStatusFilter"
+        - $ref: "#/components/parameters/DueUntilFilter"
+        - $ref: "#/components/parameters/VehicleFilter"
+      responses:
+        "200":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ServiceReminderList"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+    post:
+      operationId: createServiceReminder
+      tags: [crm]
+      summary: "Schedule a service reminder"
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ServiceReminderRequest"
+      responses:
+        "201":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ServiceReminder"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+  /api/v1/tenants/{tenantID}/service-reminders/{reminderID}/done:
+    post:
+      operationId: doneServiceReminder
+      tags: [crm]
+      summary: "Mark a reminder done"
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/ReminderID"
+      responses:
+        "204": { $ref: "#/components/responses/NoContent" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+  /api/v1/tenants/{tenantID}/service-reminders/{reminderID}/cancel:
+    post:
+      operationId: cancelServiceReminder
+      tags: [crm]
+      summary: "Mark a reminder cancel"
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/ReminderID"
+      responses:
+        "204": { $ref: "#/components/responses/NoContent" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+  /api/v1/tenants/{tenantID}/service-reminders/dispatch:
+    post:
+      operationId: dispatchServiceReminders
+      tags: [crm]
+      summary: "E-mail due reminders to customers who consented"
+      description: "Requires `crm.send`. Each reminder is sent once; safe to call from a scheduler. Reminders without consent or e-mail stay pending."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DispatchRequest"
+      responses:
+        "200":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DispatchResult"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+  /api/v1/tenants/{tenantID}/service-campaigns/{campaignID}/dispatch:
+    post:
+      operationId: dispatchServiceCampaign
+      tags: [crm]
+      summary: "E-mail the owners of pending campaign vehicles"
+      description: "Requires `crm.send`. Recalls and service campaigns need the service_reminders consent, marketing needs marketing_email."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/CampaignID"
+      responses:
+        "200":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DispatchResult"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+  /api/v1/public/unsubscribe:
+    post:
+      operationId: unsubscribe
+      tags: [crm]
+      summary: "Unsubscribe with the e-mail link"
+      description: "Public. Revokes the consent behind the message; each link works once."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UnsubscribeRequest"
+      responses:
+        "204": { $ref: "#/components/responses/NoContent" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+
 components:
   securitySchemes:
     bearerAuth:
@@ -5390,6 +6021,54 @@ components:
         type: integer
         minimum: 1
   parameters:
+    WarrantyID:
+      name: warrantyID
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    ClaimID:
+      name: claimID
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    CampaignID:
+      name: campaignID
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    ReminderID:
+      name: reminderID
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    ActiveFilter:
+      name: active
+      in: query
+      schema: { type: boolean }
+    WarrantyFilter:
+      name: warranty_id
+      in: query
+      schema: { type: string, format: uuid }
+    ClaimStatusFilter:
+      name: status
+      in: query
+      schema: { type: string, enum: [open, in_review, approved, rejected, resolved] }
+    CampaignStatusFilter:
+      name: status
+      in: query
+      schema: { type: string, enum: [draft, active, closed] }
+    CampaignVehicleStatusFilter:
+      name: status
+      in: query
+      schema: { type: string, enum: [pending, notified, done, declined] }
+    ReminderStatusFilter:
+      name: status
+      in: query
+      schema: { type: string, enum: [pending, sent, done, cancelled] }
+    DueUntilFilter:
+      name: due_until
+      in: query
+      schema: { type: string, format: date }
     LineID:
       name: lineID
       in: path
@@ -5918,6 +6597,298 @@ components:
           schema:
             $ref: "#/components/schemas/Error"
   schemas:
+    Warranty:
+      type: object
+      additionalProperties: false
+      required: [id, work_order_id, work_order_code, work_order_item_id, vehicle_id, party_id, coverage, description, starts_on, ends_on, km_limit, odometer_at_start, status, void_reason]
+      properties:
+        id: { type: string, format: uuid }
+        work_order_id: { type: string, format: uuid }
+        work_order_code: { type: string }
+        work_order_item_id: { type: string, format: uuid }
+        vehicle_id: { type: string, format: uuid }
+        party_id: { type: string, format: uuid }
+        coverage: { type: string, enum: [part, service] }
+        description: { type: string }
+        starts_on: { type: string, format: date }
+        ends_on: { type: string, format: date }
+        km_limit: { type: [integer, "null"] }
+        odometer_at_start: { type: [integer, "null"] }
+        status: { type: string, enum: [active, voided] }
+        void_reason: { type: [string, "null"] }
+    WarrantyList:
+      type: object
+      additionalProperties: false
+      required: [items, next_cursor]
+      properties:
+        items: { type: array, items: { $ref: "#/components/schemas/Warranty" } }
+        next_cursor: { $ref: "#/components/schemas/NextCursor" }
+    WarrantyVoidRequest:
+      type: object
+      additionalProperties: false
+      required: [reason]
+      properties:
+        reason: { type: string, minLength: 3, maxLength: 300 }
+    WarrantyClaim:
+      type: object
+      additionalProperties: false
+      required: [id, warranty_id, claim_type, supplier_party_id, opened_on, description, odometer_km, requested_amount, approved_amount, status, resolution, return_work_order_id, version, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        warranty_id: { type: string, format: uuid }
+        claim_type: { type: string }
+        supplier_party_id: { type: [string, "null"], format: uuid }
+        opened_on: { type: string, format: date }
+        description: { type: string }
+        odometer_km: { type: [integer, "null"] }
+        requested_amount: { type: [string, "null"], pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
+        approved_amount: { type: [string, "null"], pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
+        status: { type: string }
+        resolution: { type: [string, "null"] }
+        return_work_order_id: { type: [string, "null"], format: uuid }
+        version: { type: integer }
+        created_at: { type: string, format: date-time }
+    WarrantyClaimList:
+      type: object
+      additionalProperties: false
+      required: [items, next_cursor]
+      properties:
+        items: { type: array, items: { $ref: "#/components/schemas/WarrantyClaim" } }
+        next_cursor: { $ref: "#/components/schemas/NextCursor" }
+    WarrantyClaimRequest:
+      type: object
+      additionalProperties: false
+      required: [warranty_id, claim_type, description]
+      properties:
+        warranty_id: { type: string, format: uuid }
+        claim_type: { type: string, enum: [workshop, parts_supplier, manufacturer] }
+        supplier_party_id: { type: [string, "null"], format: uuid }
+        description: { type: string }
+        odometer_km: { type: [integer, "null"] }
+        requested_amount: { type: [string, number, "null"] }
+    WarrantyClaimUpdate:
+      type: object
+      additionalProperties: false
+      required: [version]
+      properties:
+        version: { type: integer }
+        status: { type: string }
+        approved_amount: { type: [string, number, "null"] }
+        resolution: { type: [string, "null"] }
+        return_work_order_id: { type: [string, "null"], format: uuid }
+    ServiceCampaign:
+      type: object
+      additionalProperties: false
+      required: [id, code, title, description, campaign_type, source, source_reference, starts_on, ends_on, make_id, model_id, year_from, year_to, status]
+      properties:
+        id: { type: string, format: uuid }
+        code: { type: string }
+        title: { type: string }
+        description: { type: [string, "null"] }
+        campaign_type: { type: string, enum: [recall, service, marketing] }
+        source: { type: string }
+        source_reference: { type: [string, "null"] }
+        starts_on: { type: string, format: date }
+        ends_on: { type: [string, "null"], format: date }
+        make_id: { type: [string, "null"], format: uuid }
+        model_id: { type: [string, "null"], format: uuid }
+        year_from: { type: [integer, "null"] }
+        year_to: { type: [integer, "null"] }
+        status: { type: string }
+        vehicles: { type: integer }
+        done: { type: integer }
+    ServiceCampaignList:
+      type: object
+      additionalProperties: false
+      required: [items, next_cursor]
+      properties:
+        items: { type: array, items: { $ref: "#/components/schemas/ServiceCampaign" } }
+        next_cursor: { $ref: "#/components/schemas/NextCursor" }
+    ServiceCampaignRequest:
+      type: object
+      additionalProperties: false
+      required: [code, title, campaign_type, source, starts_on]
+      properties:
+        code: { type: string }
+        title: { type: string }
+        description: { type: [string, "null"] }
+        campaign_type: { type: string, enum: [recall, service, marketing] }
+        source: { type: string }
+        source_reference: { type: [string, "null"] }
+        starts_on: { type: string, format: date }
+        ends_on: { type: [string, "null"], format: date }
+        make_id: { type: [string, "null"], format: uuid }
+        model_id: { type: [string, "null"], format: uuid }
+        year_from: { type: [integer, "null"] }
+        year_to: { type: [integer, "null"] }
+    CampaignVehicle:
+      type: object
+      additionalProperties: false
+      required: [vehicle_id, current_plate, chassis_number, model_year, owner_party_id, status, work_order_id]
+      properties:
+        vehicle_id: { type: string, format: uuid }
+        current_plate: { type: [string, "null"] }
+        chassis_number: { type: [string, "null"] }
+        model_year: { type: [integer, "null"] }
+        owner_party_id: { type: [string, "null"], format: uuid }
+        status: { type: string }
+        work_order_id: { type: [string, "null"], format: uuid }
+    CampaignVehicleList:
+      type: object
+      additionalProperties: false
+      required: [items, next_cursor]
+      properties:
+        items: { type: array, items: { $ref: "#/components/schemas/CampaignVehicle" } }
+        next_cursor: { $ref: "#/components/schemas/NextCursor" }
+    CampaignVehiclesRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        vehicle_ids: { type: [array, "null"], maxItems: 5000, items: { type: string, format: uuid } }
+    CampaignVehiclesAdded:
+      type: object
+      additionalProperties: false
+      required: [added]
+      properties:
+        added: { type: integer }
+    CampaignVehicleStatusRequest:
+      type: object
+      additionalProperties: false
+      required: [status]
+      properties:
+        status: { type: string, enum: [pending, notified, done, declined] }
+        work_order_id: { type: [string, "null"], format: uuid }
+    OpenCampaign:
+      type: object
+      additionalProperties: false
+      required: [campaign_id, code, title, campaign_type, status]
+      properties:
+        campaign_id: { type: string, format: uuid }
+        code: { type: string }
+        title: { type: string }
+        campaign_type: { type: string }
+        status: { type: string }
+    OpenCampaignList:
+      type: object
+      additionalProperties: false
+      required: [items, next_cursor]
+      properties:
+        items: { type: array, items: { $ref: "#/components/schemas/OpenCampaign" } }
+        next_cursor: { $ref: "#/components/schemas/NextCursor" }
+    Consent:
+      type: object
+      additionalProperties: false
+      required: [id, party_id, purpose, text_version, source, granted_at, revoked_at, revoked_source, active]
+      properties:
+        id: { type: string, format: uuid }
+        party_id: { type: string, format: uuid }
+        purpose: { type: string, enum: [service_reminders, marketing_email] }
+        text_version: { type: string }
+        source: { type: string }
+        granted_at: { type: string, format: date-time }
+        revoked_at: { type: [string, "null"], format: date-time }
+        revoked_source: { type: [string, "null"] }
+        active: { type: boolean }
+    ConsentList:
+      type: object
+      additionalProperties: false
+      required: [items, next_cursor]
+      properties:
+        items: { type: array, items: { $ref: "#/components/schemas/Consent" } }
+        next_cursor: { $ref: "#/components/schemas/NextCursor" }
+    ConsentRequest:
+      type: object
+      additionalProperties: false
+      required: [party_id, purpose, text_version, source]
+      properties:
+        party_id: { type: string, format: uuid }
+        purpose: { type: string, enum: [service_reminders, marketing_email] }
+        text_version: { type: string }
+        source: { type: string, enum: [counter, form, phone, import] }
+    ConsentRevokeRequest:
+      type: object
+      additionalProperties: false
+      required: [purpose, source]
+      properties:
+        purpose: { type: string, enum: [service_reminders, marketing_email] }
+        source: { type: string, enum: [counter, form, phone, import] }
+    CrmMessage:
+      type: object
+      additionalProperties: false
+      required: [id, purpose, reminder_id, campaign_id, vehicle_id, status, unsubscribed_at, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        purpose: { type: string }
+        reminder_id: { type: [string, "null"], format: uuid }
+        campaign_id: { type: [string, "null"], format: uuid }
+        vehicle_id: { type: [string, "null"], format: uuid }
+        status: { type: string }
+        unsubscribed_at: { type: [string, "null"], format: date-time }
+        created_at: { type: string, format: date-time }
+    CrmMessageList:
+      type: object
+      additionalProperties: false
+      required: [items, next_cursor]
+      properties:
+        items: { type: array, items: { $ref: "#/components/schemas/CrmMessage" } }
+        next_cursor: { $ref: "#/components/schemas/NextCursor" }
+    ServiceReminder:
+      type: object
+      additionalProperties: false
+      required: [id, location_id, vehicle_id, party_id, due_on, due_km, reason, source, work_order_id, status, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        location_id: { type: string, format: uuid }
+        vehicle_id: { type: string, format: uuid }
+        party_id: { type: string, format: uuid }
+        party_name: { type: string }
+        current_plate: { type: [string, "null"] }
+        due_on: { type: string, format: date }
+        due_km: { type: [integer, "null"] }
+        reason: { type: string }
+        source: { type: string }
+        work_order_id: { type: [string, "null"], format: uuid }
+        status: { type: string }
+        created_at: { type: string, format: date-time }
+    ServiceReminderList:
+      type: object
+      additionalProperties: false
+      required: [items, next_cursor]
+      properties:
+        items: { type: array, items: { $ref: "#/components/schemas/ServiceReminder" } }
+        next_cursor: { $ref: "#/components/schemas/NextCursor" }
+    ServiceReminderRequest:
+      type: object
+      additionalProperties: false
+      required: [location_id, vehicle_id, party_id, due_on, reason]
+      properties:
+        location_id: { type: string, format: uuid }
+        vehicle_id: { type: string, format: uuid }
+        party_id: { type: string, format: uuid }
+        due_on: { type: string, format: date }
+        due_km: { type: [integer, "null"] }
+        reason: { type: string }
+        work_order_id: { type: [string, "null"], format: uuid }
+    DispatchRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        ahead_days: { type: integer, minimum: 0, maximum: 30 }
+    DispatchResult:
+      type: object
+      additionalProperties: false
+      required: [sent, skipped_no_consent, skipped_no_email]
+      properties:
+        sent: { type: integer }
+        skipped_no_consent: { type: integer }
+        skipped_no_email: { type: integer }
+    UnsubscribeRequest:
+      type: object
+      additionalProperties: false
+      required: [tenant_id, token]
+      properties:
+        tenant_id: { type: string, format: uuid }
+        token: { type: string, maxLength: 128 }
     StatementImport:
       type: object
       additionalProperties: false
@@ -6184,14 +7155,20 @@ components:
     TenantSettings:
       type: object
       additionalProperties: false
-      required: [max_discount_pct, cash_difference_alert]
+      required: [max_discount_pct, cash_difference_alert, warranty_days_parts, warranty_days_services, warranty_km]
       properties:
+        warranty_days_parts: { type: integer }
+        warranty_days_services: { type: integer }
+        warranty_km: { type: integer, description: "0 = no mileage limit" }
         max_discount_pct: { type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
         cash_difference_alert: { type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
     TenantSettingsPatchRequest:
       type: object
       additionalProperties: false
       properties:
+        warranty_days_parts: { type: integer, minimum: 0, maximum: 3650 }
+        warranty_days_services: { type: integer, minimum: 0, maximum: 3650 }
+        warranty_km: { type: integer, minimum: 0, maximum: 1000000 }
         max_discount_pct: { type: [string, number] }
         cash_difference_alert: { type: [string, number] }
     CashRegister:
