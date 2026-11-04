@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: KZ Moto System API
-  version: 0.12.0
+  version: 0.13.0
   summary: Multi-tenant management API for automotive repair shops.
   description: |
     REST API consumed directly by the web frontend (no BFF).
@@ -79,6 +79,8 @@ tags:
     description: Warranties, claims, campaigns and recalls.
   - name: crm
     description: Consents (LGPD), service reminders and e-mails.
+  - name: vehicle-sales
+    description: Vehicles for sale (dealer feature), appraisals, reservations and sales.
 paths:
   /healthz:
     get:
@@ -6003,6 +6005,503 @@ paths:
         "422": { $ref: "#/components/responses/ValidationFailed" }
         "429": { $ref: "#/components/responses/TooManyRequests" }
 
+  /api/v1/tenants/{tenantID}/features:
+    get:
+      operationId: getFeatures
+      tags: [settings]
+      summary: "Modules enabled for the tenant"
+      description: "Requires `settings.manage`. Defaults: warranties and crm on, vehicle_sales off."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+      responses:
+        "200":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TenantFeatures"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+    put:
+      operationId: setFeatures
+      tags: [settings]
+      summary: "Enable or disable modules"
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TenantFeatures"
+      responses:
+        "200":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TenantFeatures"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+  /api/v1/tenants/{tenantID}/vehicle-stock:
+    get:
+      operationId: listVehicleStock
+      tags: [vehicle-sales]
+      summary: "Vehicles in stock"
+      description: "Requires the vehicle_sales feature (PUT /features) — otherwise 403 feature_disabled."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/VehicleUnitStatus"
+        - $ref: "#/components/parameters/LocationFilter"
+      responses:
+        "200":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VehicleUnitList"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+    post:
+      operationId: receiveVehicle
+      tags: [vehicle-sales]
+      summary: "Receive a vehicle into stock"
+      description: "Requires `vehicle_sales.manage`. A vehicle can be in stock only once at a time (409 vehicle_in_stock)."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VehicleUnitRequest"
+      responses:
+        "201":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VehicleUnit"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+  /api/v1/tenants/{tenantID}/vehicle-stock/{unitID}:
+    get:
+      operationId: getVehicleUnit
+      tags: [vehicle-sales]
+      summary: "A stock unit with costs and movements"
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/UnitID"
+      responses:
+        "200":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VehicleUnit"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+    patch:
+      operationId: updateVehicleUnit
+      tags: [vehicle-sales]
+      summary: "Change status, price or notes"
+      description: "Reserved and sold only change through reservations and sales."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/UnitID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VehicleUnitPatch"
+      responses:
+        "200":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VehicleUnit"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+  /api/v1/tenants/{tenantID}/vehicle-stock/{unitID}/costs:
+    post:
+      operationId: addVehicleCost
+      tags: [vehicle-sales]
+      summary: "Add a preparation cost"
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/UnitID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VehicleCostRequest"
+      responses:
+        "201":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VehicleUnit"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+  /api/v1/tenants/{tenantID}/vehicle-stock/{unitID}/transfer:
+    post:
+      operationId: transferVehicle
+      tags: [vehicle-sales]
+      summary: "Move a unit to another location"
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/UnitID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VehicleTransferRequest"
+      responses:
+        "200":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VehicleUnit"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+  /api/v1/tenants/{tenantID}/vehicle-appraisals:
+    get:
+      operationId: listVehicleAppraisals
+      tags: [vehicle-sales]
+      summary: "Appraisals"
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/VehicleFilter"
+        - $ref: "#/components/parameters/AppraisalStatus"
+      responses:
+        "200":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VehicleAppraisalList"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+    post:
+      operationId: createVehicleAppraisal
+      tags: [vehicle-sales]
+      summary: "Appraise a used vehicle"
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VehicleAppraisalRequest"
+      responses:
+        "201":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VehicleAppraisal"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+  /api/v1/tenants/{tenantID}/vehicle-reservations:
+    get:
+      operationId: listVehicleReservations
+      tags: [vehicle-sales]
+      summary: "Reservations"
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/UnitFilter"
+        - $ref: "#/components/parameters/ReservationStatus"
+      responses:
+        "200":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VehicleReservationList"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+    post:
+      operationId: reserveVehicle
+      tags: [vehicle-sales]
+      summary: "Reserve an available vehicle"
+      description: "Requires `vehicle_sales.sell`. 1 to 30 days; a deposit becomes a receivable from the customer. Expired reservations free the vehicle."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VehicleReservationRequest"
+      responses:
+        "201":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VehicleReservation"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+  /api/v1/tenants/{tenantID}/vehicle-reservations/{reservationID}/release:
+    post:
+      operationId: releaseVehicleReservation
+      tags: [vehicle-sales]
+      summary: "Release a reservation"
+      description: "An unpaid deposit is cancelled; a paid one must be refunded first."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/ReservationID"
+      responses:
+        "200":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VehicleReservation"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+  /api/v1/tenants/{tenantID}/vehicle-sales:
+    get:
+      operationId: listVehicleSales
+      tags: [vehicle-sales]
+      summary: "Vehicle sales"
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/VehicleSaleStatus"
+      responses:
+        "200":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VehicleSaleList"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+    post:
+      operationId: createVehicleSale
+      tags: [vehicle-sales]
+      summary: "Open a draft vehicle sale"
+      description: "Price from the unit; discounts need `vehicle_sales.manage`; a reserved vehicle only for its customer (deposit applied); trade-in from an open, valid appraisal."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VehicleSaleRequest"
+      responses:
+        "201":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VehicleSale"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+  /api/v1/tenants/{tenantID}/vehicle-sales/{saleID}:
+    get:
+      operationId: getVehicleSale
+      tags: [vehicle-sales]
+      summary: "A vehicle sale"
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/SaleID"
+      responses:
+        "200":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VehicleSale"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+  /api/v1/tenants/{tenantID}/vehicle-sales/{saleID}/complete:
+    post:
+      operationId: completeVehicleSale
+      tags: [vehicle-sales]
+      summary: "Complete a sale (idempotent)"
+      description: "Sells the unit, records the buyer as owner, takes the trade-in into stock and creates the buyer and financer receivables."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/SaleID"
+      responses:
+        "200":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VehicleSale"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+  /api/v1/tenants/{tenantID}/vehicle-sales/{saleID}/cancel:
+    post:
+      operationId: cancelVehicleSale
+      tags: [vehicle-sales]
+      summary: "Cancel a draft sale"
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/SaleID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VehicleSaleCancelRequest"
+      responses:
+        "200":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VehicleSale"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+
 components:
   securitySchemes:
     bearerAuth:
@@ -6021,6 +6520,36 @@ components:
         type: integer
         minimum: 1
   parameters:
+    UnitID:
+      name: unitID
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    ReservationID:
+      name: reservationID
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    VehicleUnitStatus:
+      name: status
+      in: query
+      schema: { type: string, enum: [preparation, available, reserved, sold, returned, blocked] }
+    UnitFilter:
+      name: unit_id
+      in: query
+      schema: { type: string, format: uuid }
+    AppraisalStatus:
+      name: status
+      in: query
+      schema: { type: string, enum: [open, used, rejected] }
+    ReservationStatus:
+      name: status
+      in: query
+      schema: { type: string, enum: [active, converted, released, expired] }
+    VehicleSaleStatus:
+      name: status
+      in: query
+      schema: { type: string, enum: [draft, completed, cancelled] }
     WarrantyID:
       name: warrantyID
       in: path
@@ -6597,6 +7126,236 @@ components:
           schema:
             $ref: "#/components/schemas/Error"
   schemas:
+    TenantFeatures:
+      type: object
+      additionalProperties: false
+      properties:
+        vehicle_sales: { type: boolean }
+        warranties: { type: boolean }
+        crm: { type: boolean }
+    VehicleCost:
+      type: object
+      additionalProperties: false
+      required: [id, cost_type, amount, incurred_on, description]
+      properties:
+        id: { type: string, format: uuid }
+        cost_type: { type: string }
+        amount: { type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
+        incurred_on: { type: string, format: date }
+        description: { type: string }
+    VehicleMovement:
+      type: object
+      additionalProperties: false
+      required: [movement_type, from_status, to_status, from_location_id, to_location_id, from_price, to_price, reference_id, notes, created_at]
+      properties:
+        movement_type: { type: string }
+        from_status: { type: [string, "null"] }
+        to_status: { type: [string, "null"] }
+        from_location_id: { type: [string, "null"], format: uuid }
+        to_location_id: { type: [string, "null"], format: uuid }
+        from_price: { type: [string, "null"], pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
+        to_price: { type: [string, "null"], pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
+        reference_id: { type: [string, "null"], format: uuid }
+        notes: { type: [string, "null"] }
+        created_at: { type: string, format: date-time }
+    VehicleUnit:
+      type: object
+      additionalProperties: false
+      required: [id, location_id, vehicle_id, stock_number, current_plate, chassis_number, model_year, make_text, model_text, acquisition_type, acquisition_date, supplier_party_id, acquisition_cost, preparation_cost, total_cost, list_price, status, notes, version, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        location_id: { type: string, format: uuid }
+        vehicle_id: { type: string, format: uuid }
+        stock_number: { type: string }
+        current_plate: { type: [string, "null"] }
+        chassis_number: { type: [string, "null"] }
+        model_year: { type: [integer, "null"] }
+        make_text: { type: [string, "null"] }
+        model_text: { type: [string, "null"] }
+        acquisition_type: { type: string }
+        acquisition_date: { type: string, format: date }
+        supplier_party_id: { type: [string, "null"], format: uuid }
+        acquisition_cost: { type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
+        preparation_cost: { type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
+        total_cost: { type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
+        list_price: { type: [string, "null"], pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
+        status: { type: string }
+        notes: { type: [string, "null"] }
+        version: { type: integer }
+        created_at: { type: string, format: date-time }
+        costs: { type: array, items: { $ref: "#/components/schemas/VehicleCost" } }
+        movements: { type: array, items: { $ref: "#/components/schemas/VehicleMovement" } }
+    VehicleUnitList:
+      type: object
+      additionalProperties: false
+      required: [items, next_cursor]
+      properties:
+        items: { type: array, items: { $ref: "#/components/schemas/VehicleUnit" } }
+        next_cursor: { $ref: "#/components/schemas/NextCursor" }
+    VehicleUnitRequest:
+      type: object
+      additionalProperties: false
+      required: [location_id, vehicle_id, stock_number, acquisition_type, acquisition_date, acquisition_cost]
+      properties:
+        location_id: { type: string, format: uuid }
+        vehicle_id: { type: string, format: uuid }
+        stock_number: { type: string }
+        acquisition_type: { type: string, enum: [purchase, trade_in, consignment, transfer, other] }
+        acquisition_date: { type: string, format: date }
+        supplier_party_id: { type: [string, "null"], format: uuid }
+        acquisition_cost: { type: [string, number] }
+        list_price: { type: [string, number, "null"] }
+        status: { type: string, enum: [preparation, available] }
+        notes: { type: [string, "null"] }
+    VehicleUnitPatch:
+      type: object
+      additionalProperties: false
+      required: [version]
+      properties:
+        version: { type: integer }
+        status: { type: [string, "null"], enum: [preparation, available, blocked, returned, null] }
+        list_price: { type: [string, number, "null"] }
+        notes: { type: [string, "null"] }
+    VehicleCostRequest:
+      type: object
+      additionalProperties: false
+      required: [cost_type, amount, incurred_on, description]
+      properties:
+        cost_type: { type: string, enum: [review, transport, documentation, preparation, other] }
+        amount: { type: [string, number] }
+        incurred_on: { type: string, format: date }
+        description: { type: string }
+    VehicleTransferRequest:
+      type: object
+      additionalProperties: false
+      required: [to_location_id]
+      properties:
+        to_location_id: { type: string, format: uuid }
+    VehicleAppraisal:
+      type: object
+      additionalProperties: false
+      required: [id, location_id, vehicle_id, party_id, odometer_km, estimated_value, known_debts, trade_in_value, checklist_notes, justification, appraised_on, valid_until, status]
+      properties:
+        id: { type: string, format: uuid }
+        location_id: { type: string, format: uuid }
+        vehicle_id: { type: string, format: uuid }
+        party_id: { type: string, format: uuid }
+        odometer_km: { type: [integer, "null"] }
+        estimated_value: { type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
+        known_debts: { type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
+        trade_in_value: { type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
+        checklist_notes: { type: [string, "null"] }
+        justification: { type: [string, "null"] }
+        appraised_on: { type: string, format: date }
+        valid_until: { type: string, format: date }
+        status: { type: string }
+    VehicleAppraisalList:
+      type: object
+      additionalProperties: false
+      required: [items, next_cursor]
+      properties:
+        items: { type: array, items: { $ref: "#/components/schemas/VehicleAppraisal" } }
+        next_cursor: { $ref: "#/components/schemas/NextCursor" }
+    VehicleAppraisalRequest:
+      type: object
+      additionalProperties: false
+      required: [location_id, vehicle_id, party_id, estimated_value]
+      properties:
+        location_id: { type: string, format: uuid }
+        vehicle_id: { type: string, format: uuid }
+        party_id: { type: string, format: uuid }
+        odometer_km: { type: [integer, "null"] }
+        estimated_value: { type: [string, number] }
+        known_debts: { type: [string, number, "null"] }
+        checklist_notes: { type: [string, "null"] }
+        justification: { type: [string, "null"] }
+        valid_days: { type: integer, minimum: 0, maximum: 30 }
+    VehicleReservation:
+      type: object
+      additionalProperties: false
+      required: [id, unit_id, party_id, expires_at, deposit_amount, status, notes, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        unit_id: { type: string, format: uuid }
+        party_id: { type: string, format: uuid }
+        expires_at: { type: string, format: date-time }
+        deposit_amount: { type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
+        status: { type: string }
+        notes: { type: [string, "null"] }
+        created_at: { type: string, format: date-time }
+    VehicleReservationList:
+      type: object
+      additionalProperties: false
+      required: [items, next_cursor]
+      properties:
+        items: { type: array, items: { $ref: "#/components/schemas/VehicleReservation" } }
+        next_cursor: { $ref: "#/components/schemas/NextCursor" }
+    VehicleReservationRequest:
+      type: object
+      additionalProperties: false
+      required: [unit_id, party_id]
+      properties:
+        unit_id: { type: string, format: uuid }
+        party_id: { type: string, format: uuid }
+        days: { type: integer, minimum: 0, maximum: 30 }
+        deposit_amount: { type: [string, number, "null"] }
+        notes: { type: [string, "null"] }
+    VehicleSale:
+      type: object
+      additionalProperties: false
+      required: [id, code, location_id, unit_id, buyer_party_id, seller_membership_id, reservation_id, list_price, discount, final_price, trade_in_appraisal_id, trade_in_value, deposit_applied, financed_amount, financer_party_id, buyer_balance, installments, first_due_date, status, contract_snapshot, completed_at, cancelled_at, cancel_reason, version, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        code: { type: string }
+        location_id: { type: string, format: uuid }
+        unit_id: { type: string, format: uuid }
+        buyer_party_id: { type: string, format: uuid }
+        seller_membership_id: { type: [string, "null"], format: uuid }
+        reservation_id: { type: [string, "null"], format: uuid }
+        list_price: { type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
+        discount: { type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
+        final_price: { type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
+        trade_in_appraisal_id: { type: [string, "null"], format: uuid }
+        trade_in_value: { type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
+        deposit_applied: { type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
+        financed_amount: { type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
+        financer_party_id: { type: [string, "null"], format: uuid }
+        buyer_balance: { type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
+        installments: { type: integer }
+        first_due_date: { type: [string, "null"], format: date }
+        status: { type: string }
+        contract_snapshot: { type: [object, "null"] }
+        completed_at: { type: [string, "null"], format: date-time }
+        cancelled_at: { type: [string, "null"], format: date-time }
+        cancel_reason: { type: [string, "null"] }
+        version: { type: integer }
+        created_at: { type: string, format: date-time }
+    VehicleSaleList:
+      type: object
+      additionalProperties: false
+      required: [items, next_cursor]
+      properties:
+        items: { type: array, items: { $ref: "#/components/schemas/VehicleSale" } }
+        next_cursor: { $ref: "#/components/schemas/NextCursor" }
+    VehicleSaleRequest:
+      type: object
+      additionalProperties: false
+      required: [unit_id, buyer_party_id]
+      properties:
+        unit_id: { type: string, format: uuid }
+        buyer_party_id: { type: string, format: uuid }
+        discount: { type: [string, number, "null"] }
+        trade_in_appraisal_id: { type: [string, "null"], format: uuid }
+        financed_amount: { type: [string, number, "null"] }
+        financer_party_id: { type: [string, "null"], format: uuid }
+        installments: { type: integer, minimum: 0, maximum: 60 }
+        first_due_date: { type: [string, "null"], format: date }
+    VehicleSaleCancelRequest:
+      type: object
+      additionalProperties: false
+      required: [reason]
+      properties:
+        reason: { type: string, minLength: 3, maxLength: 500 }
     Warranty:
       type: object
       additionalProperties: false
