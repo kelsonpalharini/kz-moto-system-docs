@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: KZ Moto System API
-  version: 0.13.0
+  version: 0.14.0
   summary: Multi-tenant management API for automotive repair shops.
   description: |
     REST API consumed directly by the web frontend (no BFF).
@@ -3498,8 +3498,8 @@ paths:
     post:
       operationId: importSupplierInvoice
       tags: [purchasing]
-      summary: "Import an NF-e XML as a draft for review"
-      description: "Requires `purchasing.receive`. Send the raw XML (application/xml, up to the API body limit). DOCTYPE/entities, deep nesting and non-55 models are rejected. Nothing is posted until confirmation; lines are matched to products by learned supplier codes or EAN. A repeated access key returns `409 invoice_already_imported`."
+      summary: "Import an NF-e or NFC-e XML as a draft for review"
+      description: "Requires `purchasing.receive`. Send the raw XML (application/xml, up to the API body limit). DOCTYPE/entities and deep nesting are rejected. Models 55 (NF-e, addressed to a CNPJ of the tenant) and 65 (NFC-e; without a recipient or with a CPF it is taken as the location company, a third-party CNPJ is refused) are accepted. Nothing is posted until confirmation; lines are matched to products by learned supplier codes or EAN. A repeated access key returns `409 invoice_already_imported`."
       security: [{ bearerAuth: [] }]
       parameters:
         - $ref: "#/components/parameters/TenantID"
@@ -3646,12 +3646,72 @@ paths:
         "409": { $ref: "#/components/responses/Conflict" }
         "415": { $ref: "#/components/responses/UnsupportedMediaType" }
         "422": { $ref: "#/components/responses/ValidationFailed" }
+  /api/v1/tenants/{tenantID}/supplier-invoices/{invoiceID}/create-supplier:
+    post:
+      operationId: createSupplierFromInvoice
+      tags: [purchasing]
+      summary: "Register the emitter as a supplier and set it on the draft"
+      description: "Requires purchasing.receive and suppliers.manage. Company, CNPJ, legal and trade name, phone, fiscal address and state registration (notes) come from the stored XML; an existing party with the CNPJ is reused."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/InvoiceID"
+      responses:
+        "200":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SupplierInvoice"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+  /api/v1/tenants/{tenantID}/supplier-invoices/{invoiceID}/create-products:
+    post:
+      operationId: createProductsFromInvoice
+      tags: [purchasing]
+      summary: "Create catalogue products from unmatched lines"
+      description: "Requires purchasing.receive and catalog.manage. Description, NCM, EAN and unit come from the XML; each line is matched to its new product (unit factor 1)."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/InvoiceID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SupplierInvoiceCreateProductsRequest"
+      responses:
+        "200":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SupplierInvoice"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
   /api/v1/tenants/{tenantID}/supplier-invoices/{invoiceID}/confirm:
     post:
       operationId: confirmSupplierInvoice
       tags: [purchasing]
       summary: "Confirm: post stock, cost, order receipts and payables once"
-      description: "Idempotent: confirming again returns the confirmed invoice. Header freight, insurance and other costs are allocated by line value, the discount likewise, and line IPI/ICMS-ST added, to give the landed unit cost that revalues the average cost."
+      description: "Idempotent: confirming again returns the confirmed invoice. An NFC-e needs paid_account_id and is posted as a payable already paid from that account (dated at issue). Header freight, insurance and other costs are allocated by line value, the discount likewise, and line IPI/ICMS-ST added, to give the landed unit cost that revalues the average cost."
       security: [{ bearerAuth: [] }]
       parameters:
         - $ref: "#/components/parameters/TenantID"
@@ -8461,7 +8521,7 @@ components:
     SupplierInvoice:
       type: object
       additionalProperties: false
-      required: [id, location_id, stock_location_id, legal_entity_id, supplier_party_id, supplier_name, purchase_order_id, access_key, number, series, issued_at, emitter_cnpj, emitter_name, products_total, freight, insurance, other_costs, discount, ipi_total, icms_st_total, total, status, confirmed_at, cancelled_at, cancel_reason, version, created_at]
+      required: [id, location_id, stock_location_id, legal_entity_id, supplier_party_id, supplier_name, purchase_order_id, model, payment_method, paid_account_id, access_key, number, series, issued_at, emitter_cnpj, emitter_name, products_total, freight, insurance, other_costs, discount, ipi_total, icms_st_total, total, status, confirmed_at, cancelled_at, cancel_reason, version, created_at]
       properties:
         id: { type: string, format: uuid }
         location_id: { type: string, format: uuid }
@@ -8470,6 +8530,9 @@ components:
         supplier_party_id: { type: [string, "null"], format: uuid }
         supplier_name: { type: [string, "null"] }
         purchase_order_id: { type: [string, "null"], format: uuid }
+        model: { type: string, enum: ["55", "65"], description: "55 = NF-e, 65 = NFC-e (consumer invoice bought at the counter)." }
+        payment_method: { type: [string, "null"], description: "Main SEFAZ tPag code from the XML (01 cash, 03 credit, 04 debit, 17 PIX...)." }
+        paid_account_id: { type: [string, "null"], format: uuid, description: "NFC-e only: account the purchase was paid from." }
         access_key: { type: string, pattern: "^[0-9]{44}$" }
         number: { type: string }
         series: { type: string }
@@ -8499,6 +8562,25 @@ components:
       properties:
         items: { type: array, items: { $ref: "#/components/schemas/SupplierInvoice" } }
         next_cursor: { $ref: "#/components/schemas/NextCursor" }
+    SupplierInvoiceCreateProductsRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        items:
+          type: array
+          maxItems: 990
+          description: Lines to create products from; empty creates one product per unmatched line (SKU from the supplier code).
+          items:
+            type: object
+            additionalProperties: false
+            required: [item_id]
+            properties:
+              item_id: { type: string, format: uuid }
+              sku: { type: string, maxLength: 40 }
+              name: { type: [string, "null"], maxLength: 160 }
+              item_kind: { type: string, enum: [part, supply, accessory, service, fee] }
+              sale_price: { type: [string, number, "null"] }
+        margin_pct: { type: [string, number, "null"], description: "Sale price = unit cost x (1 + margin/100) when sale_price is absent. Default 0." }
     SupplierInvoiceReviewRequest:
       type: object
       additionalProperties: false
@@ -8508,6 +8590,7 @@ components:
         stock_location_id: { type: [string, "null"], format: uuid }
         supplier_party_id: { type: [string, "null"], format: uuid }
         purchase_order_id: { type: [string, "null"], format: uuid }
+        paid_account_id: { type: [string, "null"], format: uuid, description: "NFC-e only: the payable is posted already paid from this account." }
     SupplierInvoiceMatchRequest:
       type: object
       additionalProperties: false
