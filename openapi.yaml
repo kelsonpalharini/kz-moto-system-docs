@@ -25,8 +25,10 @@ info:
     - `{tenantID}` in a path only selects a tenant. The server verifies an active membership and
       the required permission on every request; non-members receive 404.
 servers:
+  - url: https://kz-moto-api-hom.onrender.com
+    description: Staging (hom). On the free plan the first request after 15 idle minutes takes about a minute.
   - url: http://localhost:8080
-    description: Local development
+    description: Local development (make run or make docker-up)
 security: []
 tags:
   - name: operations

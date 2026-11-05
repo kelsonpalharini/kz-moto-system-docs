@@ -2,7 +2,8 @@
 
 Live Swagger UI: https://kelsonpalharini.github.io/kz-moto-system-docs/
 
-Contract: [openapi.yaml](openapi.yaml) (OpenAPI 3.1, API version 0.16.0).
+Contract: [openapi.yaml](openapi.yaml) (OpenAPI 3.1, API version 0.16.0); Brazilian Portuguese:
+[openapi.pt-BR.yaml](openapi.pt-BR.yaml). The page has a language selector (English / Português).
 
 This repository is published automatically from the private source repository on every merge
 to `main`. Do not edit it by hand: changes are overwritten. Swagger UI is distributed under the
