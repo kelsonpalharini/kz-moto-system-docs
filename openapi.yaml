@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: KZ Moto System API
-  version: 0.15.0
+  version: 0.16.0
   summary: Multi-tenant management API for automotive repair shops.
   description: |
     REST API consumed directly by the web frontend (no BFF).
@@ -83,6 +83,8 @@ tags:
     description: Vehicles for sale (dealer feature), appraisals, reservations and sales.
   - name: branding
     description: Visual identity per tenant (public lookup for the frontend).
+  - name: customer-sharing
+    description: Sharing a customer with another company, with the customer's consent.
 paths:
   /healthz:
     get:
@@ -6710,6 +6712,174 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
 
+  /api/v1/tenants/{tenantID}/customers/{partyID}/shares:
+    post:
+      operationId: shareCustomer
+      tags: [customer-sharing]
+      summary: "Ask the customer to share their data with another company"
+      description: "Requires `customers.share`. The customer (who needs an e-mail) receives a link valid for 7 days to review and accept. The target, by slug, must accept shared customers (feature customer_sharing_inbound); vehicles must be currently owned by the customer."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/PartyID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CustomerShareRequest"
+      responses:
+        "201":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CustomerShare"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+    get:
+      operationId: listCustomerShares
+      tags: [customer-sharing]
+      summary: "Share requests of a customer"
+      description: "Requires `customers.read`."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/PartyID"
+      responses:
+        "200":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CustomerShareList"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/tenants/{tenantID}/customer-shares/{shareID}/revoke:
+    post:
+      operationId: revokeCustomerShare
+      tags: [customer-sharing]
+      summary: "Revoke a share (removes the copied history from the target)"
+      description: "Requires `customers.share`."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - { name: shareID, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "204": { $ref: "#/components/responses/NoContent" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /api/v1/tenants/{tenantID}/shared-customers:
+    get:
+      operationId: listSharedCustomers
+      tags: [customer-sharing]
+      summary: "Customers other companies shared with this tenant"
+      description: "Requires `customers.read`."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+      responses:
+        "200":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SharedCustomerList"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/tenants/{tenantID}/vehicles/{vehicleID}/shared-history:
+    get:
+      operationId: vehicleSharedHistory
+      tags: [customer-sharing]
+      summary: "Service history shared by other companies for a vehicle"
+      description: "Requires `vehicles.read`. Read-only copy taken when the customer consented; removed if the share is revoked."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - { name: vehicleID, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SharedServiceRecordList"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/public/customer-shares/inspect:
+    post:
+      operationId: inspectCustomerShare
+      tags: [customer-sharing]
+      summary: "Consent page: what will be shared and with whom"
+      description: "Public (link sent to the customer); rate limited."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CustomerShareLink"
+      responses:
+        "200":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CustomerShareView"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+  /api/v1/public/customer-shares/decide:
+    post:
+      operationId: decideCustomerShare
+      tags: [customer-sharing]
+      summary: "Accept, reject or later revoke the share"
+      description: "Public (link sent to the customer); rate limited. Accepting copies the data to the target; revoking removes the copied history."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CustomerShareDecision"
+      responses:
+        "200":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CustomerShareView"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "410": { $ref: "#/components/responses/Gone" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+
 components:
   securitySchemes:
     bearerAuth:
@@ -7334,6 +7504,119 @@ components:
           schema:
             $ref: "#/components/schemas/Error"
   schemas:
+    ShareVehicle:
+      type: object
+      additionalProperties: false
+      required: [id, plate, make, model, model_year]
+      properties:
+        id: { type: string, format: uuid }
+        plate: { type: [string, "null"] }
+        make: { type: [string, "null"] }
+        model: { type: [string, "null"] }
+        model_year: { type: [integer, "null"] }
+    CustomerShareRequest:
+      type: object
+      additionalProperties: false
+      required: [target_slug]
+      properties:
+        target_slug: { type: string, maxLength: 63 }
+        scope: { type: string, enum: [profile, profile_and_history], default: profile_and_history }
+        vehicle_ids: { type: [array, "null"], maxItems: 20, items: { type: string, format: uuid } }
+    CustomerShare:
+      type: object
+      additionalProperties: false
+      required: [id, party_id, target_tenant_id, target_name, scope, status, email, expires_at, decided_at, revoked_at, revoked_source, created_at, vehicles]
+      properties:
+        id: { type: string, format: uuid }
+        party_id: { type: string, format: uuid }
+        target_tenant_id: { type: string, format: uuid }
+        target_name: { type: [string, "null"] }
+        scope: { type: string, enum: [profile, profile_and_history] }
+        status: { type: string, enum: [pending, consented, rejected, expired, revoked] }
+        email: { type: string }
+        expires_at: { type: string, format: date-time }
+        decided_at: { type: [string, "null"], format: date-time }
+        revoked_at: { type: [string, "null"], format: date-time }
+        revoked_source: { type: [string, "null"], enum: [customer, store, null] }
+        created_at: { type: string, format: date-time }
+        vehicles: { type: array, items: { $ref: "#/components/schemas/ShareVehicle" } }
+    CustomerShareList:
+      type: object
+      additionalProperties: false
+      required: [items, next_cursor]
+      properties:
+        items: { type: array, items: { $ref: "#/components/schemas/CustomerShare" } }
+        next_cursor: { $ref: "#/components/schemas/NextCursor" }
+    CustomerShareLink:
+      type: object
+      additionalProperties: false
+      required: [tenant_id, token]
+      properties:
+        tenant_id: { type: string, format: uuid }
+        token: { type: string, maxLength: 128 }
+        decision: { type: string }
+    CustomerShareDecision:
+      type: object
+      additionalProperties: false
+      required: [tenant_id, token, decision]
+      properties:
+        tenant_id: { type: string, format: uuid }
+        token: { type: string, maxLength: 128 }
+        decision: { type: string, enum: [accept, reject, revoke] }
+    CustomerShareView:
+      type: object
+      additionalProperties: false
+      required: [source_name, target_name, customer_name, scope, status, expires_at, text_version, vehicles]
+      properties:
+        source_name: { type: string }
+        target_name: { type: string }
+        customer_name: { type: string }
+        scope: { type: string }
+        status: { type: string }
+        expires_at: { type: string, format: date-time }
+        text_version: { type: string }
+        vehicles: { type: array, items: { $ref: "#/components/schemas/ShareVehicle" } }
+    SharedCustomer:
+      type: object
+      additionalProperties: false
+      required: [id, source_tenant_id, source_name, party_id, party_name, scope, records, imported_at, revoked_at]
+      properties:
+        id: { type: string, format: uuid }
+        source_tenant_id: { type: string, format: uuid }
+        source_name: { type: string }
+        party_id: { type: string, format: uuid }
+        party_name: { type: string }
+        scope: { type: string }
+        records: { type: integer }
+        imported_at: { type: string, format: date-time }
+        revoked_at: { type: [string, "null"], format: date-time }
+    SharedCustomerList:
+      type: object
+      additionalProperties: false
+      required: [items, next_cursor]
+      properties:
+        items: { type: array, items: { $ref: "#/components/schemas/SharedCustomer" } }
+        next_cursor: { $ref: "#/components/schemas/NextCursor" }
+    SharedServiceRecord:
+      type: object
+      additionalProperties: false
+      required: [id, source_name, work_order_code, opened_at, delivered_at, odometer_km, summary, total]
+      properties:
+        id: { type: string, format: uuid }
+        source_name: { type: string }
+        work_order_code: { type: string }
+        opened_at: { type: string, format: date-time }
+        delivered_at: { type: [string, "null"], format: date-time }
+        odometer_km: { type: [integer, "null"] }
+        summary: { type: string }
+        total: { type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
+    SharedServiceRecordList:
+      type: object
+      additionalProperties: false
+      required: [items, next_cursor]
+      properties:
+        items: { type: array, items: { $ref: "#/components/schemas/SharedServiceRecord" } }
+        next_cursor: { $ref: "#/components/schemas/NextCursor" }
     CustomerSharing:
       type: string
       enum: [shared_with_history, shared_without_history, per_location]
@@ -7401,6 +7684,7 @@ components:
         vehicle_sales: { type: boolean }
         warranties: { type: boolean }
         crm: { type: boolean }
+        customer_sharing_inbound: { type: boolean, description: "Accept customers shared by other companies (off by default)." }
     VehicleCost:
       type: object
       additionalProperties: false
