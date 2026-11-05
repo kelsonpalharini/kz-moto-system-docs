@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: KZ Moto System API
-  version: 0.14.0
+  version: 0.15.0
   summary: Multi-tenant management API for automotive repair shops.
   description: |
     REST API consumed directly by the web frontend (no BFF).
@@ -81,6 +81,8 @@ tags:
     description: Consents (LGPD), service reminders and e-mails.
   - name: vehicle-sales
     description: Vehicles for sale (dealer feature), appraisals, reservations and sales.
+  - name: branding
+    description: Visual identity per tenant (public lookup for the frontend).
 paths:
   /healthz:
     get:
@@ -6562,6 +6564,152 @@ paths:
         "415": { $ref: "#/components/responses/UnsupportedMediaType" }
         "422": { $ref: "#/components/responses/ValidationFailed" }
 
+  /api/v1/tenants/{tenantID}/branding:
+    get:
+      operationId: getBranding
+      tags: [branding]
+      summary: "Visual identity of the tenant"
+      description: "Any member. Defaults to the tenant name and a neutral colour when never customised; trade_name comes from the first legal entity."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+      responses:
+        "200":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Branding"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    put:
+      operationId: saveBranding
+      tags: [branding]
+      summary: "Replace the visual identity"
+      description: "Requires `branding.manage`. Logo and icon are https URLs (the files are hosted elsewhere). A custom domain becomes an allowed CORS origin within a minute; `409 domain_taken` if another tenant uses it."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BrandingRequest"
+      responses:
+        "200":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Branding"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+  /api/v1/public/branding:
+    get:
+      operationId: publicBranding
+      tags: [branding]
+      summary: "Public visual identity by slug or custom domain"
+      description: "Public (no login), for the frontend before sign-in. Pass exactly one of slug or domain. Cached for 5 minutes; rate limited per address."
+      parameters:
+        - { name: slug, in: query, schema: { type: string, maxLength: 63 } }
+        - { name: domain, in: query, schema: { type: string, maxLength: 253 } }
+      responses:
+        "200":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PublicBranding"
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+  /api/v1/tenants/{tenantID}/customers/{partyID}/locations:
+    get:
+      operationId: listCustomerLocations
+      tags: [customers]
+      summary: "Stores the customer is linked to"
+      description: "Requires `customers.read`. Links are created automatically by work orders, appointments and sales, and by customers created by members limited to some stores; under the per_location policy they decide where the customer is visible."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/PartyID"
+      responses:
+        "200":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CustomerLocationList"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/tenants/{tenantID}/customers/{partyID}/locations/{locationID}:
+    put:
+      operationId: linkCustomerLocation
+      tags: [customers]
+      summary: "Link the customer to a store"
+      description: "Requires `customers.update` and access to the store (or `locations.access_all`)."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/PartyID"
+        - $ref: "#/components/parameters/LocationID"
+      responses:
+        "200":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CustomerLocationList"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      operationId: unlinkCustomerLocation
+      tags: [customers]
+      summary: "Unlink the customer from a store"
+      description: "Requires `customers.update` and access to the store (or `locations.access_all`)."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - $ref: "#/components/parameters/PartyID"
+        - $ref: "#/components/parameters/LocationID"
+      responses:
+        "200":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CustomerLocationList"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
 components:
   securitySchemes:
     bearerAuth:
@@ -7186,6 +7334,66 @@ components:
           schema:
             $ref: "#/components/schemas/Error"
   schemas:
+    CustomerSharing:
+      type: string
+      enum: [shared_with_history, shared_without_history, per_location]
+      description: "How customers are shared between the tenant's stores: with_history = customers, vehicles and every store's work orders; without_history = customers and vehicles, work orders only of the member's stores; per_location = only customers linked to the member's stores. Members with locations.access_all see everything."
+    Branding:
+      type: object
+      additionalProperties: false
+      required: [tenant_id, slug, display_name, trade_name, primary_color, secondary_color, logo_url, icon_url, custom_domain, updated_at]
+      properties:
+        tenant_id: { type: string, format: uuid }
+        slug: { type: string }
+        display_name: { type: string }
+        trade_name: { type: [string, "null"] }
+        primary_color: { type: string, pattern: "^#[0-9A-Fa-f]{6}$" }
+        secondary_color: { type: [string, "null"], pattern: "^#[0-9A-Fa-f]{6}$" }
+        logo_url: { type: [string, "null"] }
+        icon_url: { type: [string, "null"] }
+        custom_domain: { type: [string, "null"] }
+        updated_at: { type: [string, "null"], format: date-time }
+    PublicBranding:
+      type: object
+      additionalProperties: false
+      required: [tenant_id, slug, display_name, trade_name, primary_color, secondary_color, logo_url, icon_url, custom_domain, updated_at]
+      properties:
+        tenant_id: { type: string, format: uuid, description: "Always the nil UUID in the public view." }
+        slug: { type: string }
+        display_name: { type: string }
+        trade_name: { type: [string, "null"] }
+        primary_color: { type: string, pattern: "^#[0-9A-Fa-f]{6}$" }
+        secondary_color: { type: [string, "null"], pattern: "^#[0-9A-Fa-f]{6}$" }
+        logo_url: { type: [string, "null"] }
+        icon_url: { type: [string, "null"] }
+        custom_domain: { type: [string, "null"] }
+        updated_at: { type: "null" }
+    BrandingRequest:
+      type: object
+      additionalProperties: false
+      required: [display_name]
+      properties:
+        display_name: { type: string, minLength: 1, maxLength: 120 }
+        primary_color: { type: string, pattern: "^#[0-9A-Fa-f]{6}$" }
+        secondary_color: { type: [string, "null"], pattern: "^#[0-9A-Fa-f]{6}$" }
+        logo_url: { type: [string, "null"], maxLength: 500, pattern: "^https://" }
+        icon_url: { type: [string, "null"], maxLength: 500, pattern: "^https://" }
+        custom_domain: { type: [string, "null"], maxLength: 253, description: "Host name such as app.loja.com.br" }
+    CustomerLocation:
+      type: object
+      additionalProperties: false
+      required: [id, code, name]
+      properties:
+        id: { type: string, format: uuid }
+        code: { type: string }
+        name: { type: string }
+    CustomerLocationList:
+      type: object
+      additionalProperties: false
+      required: [items, next_cursor]
+      properties:
+        items: { type: array, items: { $ref: "#/components/schemas/CustomerLocation" } }
+        next_cursor: { $ref: "#/components/schemas/NextCursor" }
     TenantFeatures:
       type: object
       additionalProperties: false
@@ -7974,11 +8182,12 @@ components:
     TenantSettings:
       type: object
       additionalProperties: false
-      required: [max_discount_pct, cash_difference_alert, warranty_days_parts, warranty_days_services, warranty_km]
+      required: [max_discount_pct, cash_difference_alert, warranty_days_parts, warranty_days_services, warranty_km, customer_sharing]
       properties:
         warranty_days_parts: { type: integer }
         warranty_days_services: { type: integer }
         warranty_km: { type: integer, description: "0 = no mileage limit" }
+        customer_sharing: { $ref: "#/components/schemas/CustomerSharing" }
         max_discount_pct: { type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
         cash_difference_alert: { type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
     TenantSettingsPatchRequest:
@@ -7988,6 +8197,7 @@ components:
         warranty_days_parts: { type: integer, minimum: 0, maximum: 3650 }
         warranty_days_services: { type: integer, minimum: 0, maximum: 3650 }
         warranty_km: { type: integer, minimum: 0, maximum: 1000000 }
+        customer_sharing: { $ref: "#/components/schemas/CustomerSharing" }
         max_discount_pct: { type: [string, number] }
         cash_difference_alert: { type: [string, number] }
     CashRegister:
