@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: KZ Moto System API
-  version: 0.17.0
+  version: 0.18.0
   summary: Multi-tenant management API for automotive repair shops.
   description: |
     REST API consumed directly by the web frontend (no BFF).
@@ -617,6 +617,7 @@ paths:
       operationId: platformCreateTenant
       tags: [platform]
       summary: Provision a tenant and invite its owner
+      description: "The slug is the tenant's address in the frontend (`/{slug}`). Paths owned by the frontend are reserved and rejected with `422`: accept-invitation, admin, api, approve, assets, confirm-email, convite, customer-share, docs, login, platform, plataforma, recuperar-senha, redefinir-senha, reset-password, unsubscribe."
       security: [{ bearerAuth: [] }]
       requestBody:
         required: true
