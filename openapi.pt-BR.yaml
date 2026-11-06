@@ -3,7 +3,7 @@
 openapi: 3.1.0
 info:
   title: "API do KZ Moto System"
-  version: 0.16.0
+  version: 0.17.0
   summary: Multi-tenant management API for automotive repair shops.
   description: |
     API REST consumida diretamente pelo frontend web (sem BFF).
@@ -6987,6 +6987,30 @@ paths:
         "415": {$ref: "#/components/responses/UnsupportedMediaType"}
         "422": {$ref: "#/components/responses/ValidationFailed"}
         "429": {$ref: "#/components/responses/TooManyRequests"}
+  /api/v1/tenants/{tenantID}/me:
+    get:
+      operationId: getMyMembership
+      tags: [tenants]
+      summary: "O que o usuário pode fazer na oficina"
+      description: "Qualquer membro. Perfis, códigos de permissão, lojas acessíveis,
+        módulos ativos e a política de compartilhamento de clientes, para o frontend
+        montar menus e esconder ações (a API continua aplicando todas as regras)."
+      security: [{bearerAuth: []}]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+      responses:
+        "200":
+          description: OK.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MyMembership"
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
 components:
   securitySchemes:
     bearerAuth:
@@ -7621,6 +7645,38 @@ components:
           schema:
             $ref: "#/components/schemas/Error"
   schemas:
+    MyMembership:
+      type: object
+      additionalProperties: false
+      required: [tenant_id, user_id, membership_id, roles, permissions, access_all_locations,
+        locations, features, customer_sharing]
+      properties:
+        tenant_id: {type: string, format: uuid}
+        user_id: {type: string, format: uuid}
+        membership_id: {type: string, format: uuid}
+        roles:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [code, name]
+            properties:
+              code: {type: string}
+              name: {type: string}
+        permissions: {type: array, items: {type: string}}
+        access_all_locations: {type: boolean}
+        locations:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [id, code, name]
+            properties:
+              id: {type: string, format: uuid}
+              code: {type: string}
+              name: {type: string}
+        features: {type: object, additionalProperties: {type: boolean}}
+        customer_sharing: {$ref: "#/components/schemas/CustomerSharing"}
     ShareVehicle:
       type: object
       additionalProperties: false
