@@ -623,8 +623,8 @@ paths:
       summary: "Criar um tenant e convidar o dono"
       description: "O slug é o endereço do tenant no frontend (`/{slug}`). Caminhos
         do próprio frontend são reservados e recusados com `422`: accept-invitation,
-        admin, api, approve, assets, confirm-email, convite, customer-share, docs,
-        login, platform, plataforma, recuperar-senha, redefinir-senha, reset-password,
+        admin, api, approve, assets, confirm-email, convite, customer-share, demo,
+        docs, login, platform, plataforma, recuperar-senha, redefinir-senha, reset-password,
         unsubscribe."
       security: [{bearerAuth: []}]
       requestBody:
