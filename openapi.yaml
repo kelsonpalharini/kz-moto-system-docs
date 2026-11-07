@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: KZ Moto System API
-  version: 0.19.0
+  version: 0.20.0
   summary: Multi-tenant management API for automotive repair shops.
   description: |
     REST API consumed directly by the web frontend (no BFF).
@@ -645,7 +645,8 @@ paths:
     patch:
       operationId: platformUpdateTenant
       tags: [platform]
-      summary: Suspend, reactivate or close a tenant
+      summary: Change a tenant's status and/or license
+      description: "Platform administrators only. Send `status` and/or `license_plan` (with optional `license_expires_on`, null = no expiry). The plan decides which optional modules the tenant may enable (trial: all; basic: ai; pro: ai, chatbot, warranties, crm, customer_sharing_inbound; enterprise: all)."
       security: [{ bearerAuth: [] }]
       parameters:
         - $ref: "#/components/parameters/TenantID"
@@ -662,6 +663,31 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+  /api/v1/platform/dashboard:
+    get:
+      operationId: platformDashboard
+      tags: [platform]
+      summary: Activity of every tenant in a period
+      description: "Platform administrators only. Completed sales (total, count, per local day), work orders created and active members per tenant since the start of the period (UTC days). Each tenant is read in its own row-level security context."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: days
+          in: query
+          description: Period length in days, ending today (default 30).
+          schema: { type: integer, minimum: 1, maximum: 366, default: 30 }
+      responses:
+        "200":
+          description: Per-tenant activity.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PlatformDashboard"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "422": { $ref: "#/components/responses/ValidationFailed" }
 
   /api/v1/tenants/{tenantID}/legal-entities:
@@ -7533,7 +7559,7 @@ components:
     MyMembership:
       type: object
       additionalProperties: false
-      required: [tenant_id, user_id, membership_id, roles, permissions, access_all_locations, locations, features, customer_sharing, can_offer_store_credit]
+      required: [tenant_id, user_id, membership_id, roles, permissions, access_all_locations, locations, features, customer_sharing, can_offer_store_credit, license_plan, licensed_features]
       properties:
         tenant_id: { type: string, format: uuid }
         user_id: { type: string, format: uuid }
@@ -7561,6 +7587,8 @@ components:
               name: { type: string }
         features: { type: object, additionalProperties: { type: boolean } }
         customer_sharing: { $ref: "#/components/schemas/CustomerSharing" }
+        license_plan: { $ref: "#/components/schemas/LicensePlan" }
+        licensed_features: { type: array, items: { type: string }, description: "Optional modules the license plan includes; features is already limited to these." }
         can_offer_store_credit: { type: boolean, description: "One of the member's roles is in the tenant's store_credit_roles: the point of sale may offer store credit (crediário)." }
     ShareVehicle:
       type: object
@@ -7743,6 +7771,8 @@ components:
         warranties: { type: boolean }
         crm: { type: boolean }
         customer_sharing_inbound: { type: boolean, description: "Accept customers shared by other companies (off by default)." }
+        ai: { type: boolean, description: "AI discoveries (daily insights). Effective only when the license plan includes it." }
+        chatbot: { type: boolean, description: "AI chatbot. Effective only when the license plan includes it." }
     VehicleCost:
       type: object
       additionalProperties: false
@@ -10529,7 +10559,7 @@ components:
     Tenant:
       type: object
       additionalProperties: false
-      required: [id, name, slug, status, timezone, created_at]
+      required: [id, name, slug, status, timezone, created_at, license_plan, license_expires_on]
       properties:
         id: { type: string, format: uuid }
         name: { type: string }
@@ -10537,6 +10567,40 @@ components:
         status: { type: string, enum: [active, suspended, closed] }
         timezone: { $ref: "#/components/schemas/Timezone" }
         created_at: { type: string, format: date-time }
+        license_plan: { $ref: "#/components/schemas/LicensePlan" }
+        license_expires_on: { type: [string, "null"], format: date, description: "null = no expiry." }
+    LicensePlan:
+      type: string
+      enum: [trial, basic, pro, enterprise]
+      description: "Commercial plan; decides the optional modules the tenant may enable."
+    PlatformDashboard:
+      type: object
+      additionalProperties: false
+      required: [since, days, tenants]
+      properties:
+        since: { type: string, format: date }
+        days: { type: integer }
+        tenants:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [tenant, sales_total, sales_count, work_orders, active_members, daily_sales]
+            properties:
+              tenant: { $ref: "#/components/schemas/Tenant" }
+              sales_total: { type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
+              sales_count: { type: integer }
+              work_orders: { type: integer }
+              active_members: { type: integer }
+              daily_sales:
+                type: array
+                items:
+                  type: object
+                  additionalProperties: false
+                  required: [day, total]
+                  properties:
+                    day: { type: string, format: date }
+                    total: { type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
     TenantList:
       type: object
       additionalProperties: false
@@ -10749,6 +10813,7 @@ components:
     PlatformUpdateTenantRequest:
       type: object
       additionalProperties: false
-      required: [status]
       properties:
         status: { type: string, enum: [active, suspended, closed] }
+        license_plan: { $ref: "#/components/schemas/LicensePlan" }
+        license_expires_on: { type: [string, "null"], format: date, description: "Sent together with license_plan; null = no expiry." }
