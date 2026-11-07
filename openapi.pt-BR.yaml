@@ -3,7 +3,7 @@
 openapi: 3.1.0
 info:
   title: "API do KZ Moto System"
-  version: 0.22.0
+  version: 0.23.0
   summary: Multi-tenant management API for automotive repair shops.
   description: |
     API REST consumida diretamente pelo frontend web (sem BFF).
@@ -9295,7 +9295,7 @@ components:
       type: object
       additionalProperties: false
       required: [max_discount_pct, cash_difference_alert, warranty_days_parts, warranty_days_services,
-        warranty_km, customer_sharing, store_credit_roles]
+        warranty_km, customer_sharing, store_credit_roles, default_margin_pct, reprice_on_invoice]
       properties:
         store_credit_roles: {type: array, items: {type: string}, description: "Códigos
             dos perfis que podem oferecer crediário no checkout. Padrão: owner, manager,
@@ -9305,6 +9305,10 @@ components:
         warranty_km: {type: integer, description: "0 = sem limite de km"}
         customer_sharing: {$ref: "#/components/schemas/CustomerSharing"}
         max_discount_pct: {type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$"}
+        default_margin_pct: {type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$", description: "Margem
+            sobre o custo usada para precificar produtos vindos de NF-e (padrão 30)."}
+        reprice_on_invoice: {type: boolean, description: "Ao confirmar uma nota de
+            fornecedor, recalcular também o preço de venda dos produtos pela margem."}
         cash_difference_alert: {type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$"}
     TenantSettingsPatchRequest:
       type: object
@@ -9317,6 +9321,8 @@ components:
         store_credit_roles: {type: array, maxItems: 50, items: {type: string}, description: "Códigos
             de perfis desta oficina que podem oferecer crediário; [] = ninguém."}
         max_discount_pct: {type: [string, number]}
+        default_margin_pct: {type: [string, number]}
+        reprice_on_invoice: {type: boolean}
         cash_difference_alert: {type: [string, number]}
     CashRegister:
       type: object
@@ -10022,6 +10028,8 @@ components:
         ncm: {type: [string, "null"]}
         sale_price: {type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$"}
         average_cost: {type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$"}
+        cost_price: {type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$", description: "Reference
+            cost (updated by supplier invoices); only for catalog.manage."}
         stock_tracked: {type: boolean}
         active: {type: boolean}
         version: {type: integer}
@@ -10048,6 +10056,8 @@ components:
         unit: {type: string, enum: [UN, PC, PAR, JG, KIT, CX, KG, G, L, ML, M, CM]}
         ncm: {type: [string, "null"]}
         sale_price: {type: [string, number]}
+        cost_price: {type: [string, number], description: "Reference cost price (default
+            0)."}
     ProductPatchRequest:
       type: object
       additionalProperties: false
@@ -10062,6 +10072,7 @@ components:
         unit: {type: string, enum: [UN, PC, PAR, JG, KIT, CX, KG, G, L, ML, M, CM]}
         ncm: {type: [string, "null"]}
         sale_price: {type: [string, number]}
+        cost_price: {type: [string, number]}
         active: {type: boolean}
     StockLocation:
       type: object
