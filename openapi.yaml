@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: KZ Moto System API
-  version: 0.21.0
+  version: 0.22.0
   summary: Multi-tenant management API for automotive repair shops.
   description: |
     REST API consumed directly by the web frontend (no BFF).
@@ -926,6 +926,170 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+
+  /api/v1/tenants/{tenantID}/message-templates:
+    get:
+      operationId: listMessageTemplates
+      tags: [messaging]
+      summary: Automatic message templates
+      description: "Requires `settings.manage`. Every event x channel, custom or built-in default (custom=false), plus the variables usable as {{name}}."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+      responses:
+        "200":
+          description: Templates and variables.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageTemplateList"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/tenants/{tenantID}/message-templates/{event}/{channel}:
+    put:
+      operationId: saveMessageTemplate
+      tags: [messaging]
+      summary: Customise a message template
+      description: "Requires `settings.manage`. E-mail needs subject and body; WhatsApp sends the Meta-approved template wa_template_name with wa_params filling {{1}}, {{2}}... (body is the reference text). Unknown variables are rejected."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - name: event
+          in: path
+          required: true
+          schema: { $ref: "#/components/schemas/MessageEvent" }
+        - name: channel
+          in: path
+          required: true
+          schema: { type: string, enum: [email, whatsapp] }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MessageTemplateRequest"
+      responses:
+        "200":
+          description: The saved template.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageTemplate"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+    delete:
+      operationId: resetMessageTemplate
+      tags: [messaging]
+      summary: Restore the default template
+      description: "Requires `settings.manage`. Removes the customisation and returns the built-in default."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - name: event
+          in: path
+          required: true
+          schema: { $ref: "#/components/schemas/MessageEvent" }
+        - name: channel
+          in: path
+          required: true
+          schema: { type: string, enum: [email, whatsapp] }
+      responses:
+        "200":
+          description: The default template.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageTemplate"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/tenants/{tenantID}/message-settings:
+    get:
+      operationId: getMessageSettings
+      tags: [messaging]
+      summary: Appointment reminder lead times
+      description: "Requires `settings.manage`. Minutes before the appointment (default 1440 = one day)."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+      responses:
+        "200":
+          description: The settings.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageSettings"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    put:
+      operationId: putMessageSettings
+      tags: [messaging]
+      summary: Save the appointment reminder lead times
+      description: "Requires `settings.manage`. Up to 5 values from 1 minute to 14 days (20160); [] turns reminders off. A reminder is sent once, within an hour after its time."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MessageSettings"
+      responses:
+        "200":
+          description: The saved settings.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageSettings"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+  /api/v1/tenants/{tenantID}/message-deliveries:
+    get:
+      operationId: listMessageDeliveries
+      tags: [messaging]
+      summary: Log of automatic messages
+      description: "Requires `settings.manage`. Newest first; no content or addresses are stored. Messages need the customer's consent per channel (service_notifications_email / service_notifications_whatsapp); consent routes work even with the CRM module off."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 200, default: 100 }
+      responses:
+        "200":
+          description: Recent deliveries.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageDeliveryList"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
 
   /api/v1/tenants/{tenantID}/legal-entities:
     get:
@@ -8058,6 +8222,69 @@ components:
       required: [to]
       properties:
         to: { type: string, description: "E-mail address, or phone in international format for WhatsApp." }
+    MessageEvent:
+      type: string
+      enum: [work_order_opened, work_order_started, work_order_completed, work_order_delivered, appointment_reminder]
+    MessageTemplate:
+      type: object
+      additionalProperties: false
+      required: [event, channel, enabled, subject, body, wa_template_name, wa_params, custom, updated_at]
+      properties:
+        event: { $ref: "#/components/schemas/MessageEvent" }
+        channel: { type: string, enum: [email, whatsapp] }
+        enabled: { type: boolean }
+        subject: { type: [string, "null"] }
+        body: { type: string }
+        wa_template_name: { type: [string, "null"] }
+        wa_params: { type: array, items: { type: string } }
+        custom: { type: boolean, description: "false = built-in default." }
+        updated_at: { type: [string, "null"], format: date-time }
+    MessageTemplateList:
+      type: object
+      additionalProperties: false
+      required: [variables, items]
+      properties:
+        variables: { type: array, items: { type: string } }
+        items: { type: array, items: { $ref: "#/components/schemas/MessageTemplate" } }
+    MessageTemplateRequest:
+      type: object
+      additionalProperties: false
+      required: [enabled, body]
+      properties:
+        enabled: { type: boolean }
+        subject: { type: string, maxLength: 200 }
+        body: { type: string, maxLength: 4000 }
+        wa_template_name: { type: string, pattern: "^[a-z0-9_]{1,512}$" }
+        wa_params: { type: array, maxItems: 10, items: { type: string } }
+    MessageSettings:
+      type: object
+      additionalProperties: false
+      required: [reminder_offsets_minutes]
+      properties:
+        reminder_offsets_minutes: { type: array, maxItems: 5, items: { type: integer, minimum: 1, maximum: 20160 } }
+    MessageDeliveryList:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [id, event, channel, source_type, source_id, offset_minutes, party_name, status, error, created_at, sent_at]
+            properties:
+              id: { type: string, format: uuid }
+              event: { type: string }
+              channel: { type: string, enum: [email, whatsapp] }
+              source_type: { type: string, enum: [work_order, appointment] }
+              source_id: { type: string, format: uuid }
+              offset_minutes: { type: integer }
+              party_name: { type: [string, "null"] }
+              status: { type: string, enum: [pending, sent, failed, skipped_no_consent, skipped_no_contact, skipped_channel_off] }
+              error: { type: [string, "null"] }
+              created_at: { type: string, format: date-time }
+              sent_at: { type: [string, "null"], format: date-time }
     TenantFeatures:
       type: object
       additionalProperties: false
@@ -8476,7 +8703,7 @@ components:
       properties:
         id: { type: string, format: uuid }
         party_id: { type: string, format: uuid }
-        purpose: { type: string, enum: [service_reminders, marketing_email] }
+        purpose: { type: string, enum: [service_reminders, marketing_email, service_notifications_email, service_notifications_whatsapp] }
         text_version: { type: string }
         source: { type: string }
         granted_at: { type: string, format: date-time }
@@ -8496,7 +8723,7 @@ components:
       required: [party_id, purpose, text_version, source]
       properties:
         party_id: { type: string, format: uuid }
-        purpose: { type: string, enum: [service_reminders, marketing_email] }
+        purpose: { type: string, enum: [service_reminders, marketing_email, service_notifications_email, service_notifications_whatsapp] }
         text_version: { type: string }
         source: { type: string, enum: [counter, form, phone, import] }
     ConsentRevokeRequest:
@@ -8504,7 +8731,7 @@ components:
       additionalProperties: false
       required: [purpose, source]
       properties:
-        purpose: { type: string, enum: [service_reminders, marketing_email] }
+        purpose: { type: string, enum: [service_reminders, marketing_email, service_notifications_email, service_notifications_whatsapp] }
         source: { type: string, enum: [counter, form, phone, import] }
     CrmMessage:
       type: object
