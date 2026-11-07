@@ -3,7 +3,7 @@
 openapi: 3.1.0
 info:
   title: "API do KZ Moto System"
-  version: 0.18.0
+  version: 0.19.0
   summary: Multi-tenant management API for automotive repair shops.
   description: |
     API REST consumida diretamente pelo frontend web (sem BFF).
@@ -5015,7 +5015,8 @@ paths:
         Os pagamentos precisam somar o total. O estoque sai pelo custo médio; dinheiro
         (exige sessão de caixa aberta) e PIX entram no financeiro; parcelas de cartão
         viram títulos a receber da adquirente, líquidos da taxa (débito D+1, crédito
-        D+30 por parcela); crediário vira títulos mensais do cliente."
+        D+30 por parcela); crediário vira títulos mensais do cliente e só é permitido
+        a membros com um dos perfis em `store_credit_roles` da oficina (senão, 403)."
       security: [{bearerAuth: []}]
       parameters:
         - $ref: "#/components/parameters/TenantID"
@@ -7654,7 +7655,7 @@ components:
       type: object
       additionalProperties: false
       required: [tenant_id, user_id, membership_id, roles, permissions, access_all_locations,
-        locations, features, customer_sharing]
+        locations, features, customer_sharing, can_offer_store_credit]
       properties:
         tenant_id: {type: string, format: uuid}
         user_id: {type: string, format: uuid}
@@ -7682,6 +7683,8 @@ components:
               name: {type: string}
         features: {type: object, additionalProperties: {type: boolean}}
         customer_sharing: {$ref: "#/components/schemas/CustomerSharing"}
+        can_offer_store_credit: {type: boolean, description: "Um dos perfis do membro
+            está em store_credit_roles da oficina: o PDV pode oferecer crediário."}
     ShareVehicle:
       type: object
       additionalProperties: false
@@ -8693,8 +8696,11 @@ components:
       type: object
       additionalProperties: false
       required: [max_discount_pct, cash_difference_alert, warranty_days_parts, warranty_days_services,
-        warranty_km, customer_sharing]
+        warranty_km, customer_sharing, store_credit_roles]
       properties:
+        store_credit_roles: {type: array, items: {type: string}, description: "Códigos
+            dos perfis que podem oferecer crediário no checkout. Padrão: owner, manager,
+            finance."}
         warranty_days_parts: {type: integer}
         warranty_days_services: {type: integer}
         warranty_km: {type: integer, description: "0 = sem limite de km"}
@@ -8709,6 +8715,8 @@ components:
         warranty_days_services: {type: integer, minimum: 0, maximum: 3650}
         warranty_km: {type: integer, minimum: 0, maximum: 1000000}
         customer_sharing: {$ref: "#/components/schemas/CustomerSharing"}
+        store_credit_roles: {type: array, maxItems: 50, items: {type: string}, description: "Códigos
+            de perfis desta oficina que podem oferecer crediário; [] = ninguém."}
         max_discount_pct: {type: [string, number]}
         cash_difference_alert: {type: [string, number]}
     CashRegister:

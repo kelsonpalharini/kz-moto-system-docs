@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: KZ Moto System API
-  version: 0.18.0
+  version: 0.19.0
   summary: Multi-tenant management API for automotive repair shops.
   description: |
     REST API consumed directly by the web frontend (no BFF).
@@ -4952,7 +4952,7 @@ paths:
       operationId: checkoutSale
       tags: [sales]
       summary: "Pay and complete a draft sale atomically"
-      description: "Requires an `Idempotency-Key`; retrying returns the completed sale. Payments must add up to the total. Stock leaves at average cost; cash (needs an open session) and PIX post to the ledger; card installments become receivables from the acquirer net of its fee (D+1 debit, D+30 per credit installment); store credit becomes monthly receivables from the customer."
+      description: "Requires an `Idempotency-Key`; retrying returns the completed sale. Payments must add up to the total. Stock leaves at average cost; cash (needs an open session) and PIX post to the ledger; card installments become receivables from the acquirer net of its fee (D+1 debit, D+30 per credit installment); store credit becomes monthly receivables from the customer and is only allowed for members holding one of the tenant's `store_credit_roles` (403 otherwise)."
       security: [{ bearerAuth: [] }]
       parameters:
         - $ref: "#/components/parameters/TenantID"
@@ -7533,7 +7533,7 @@ components:
     MyMembership:
       type: object
       additionalProperties: false
-      required: [tenant_id, user_id, membership_id, roles, permissions, access_all_locations, locations, features, customer_sharing]
+      required: [tenant_id, user_id, membership_id, roles, permissions, access_all_locations, locations, features, customer_sharing, can_offer_store_credit]
       properties:
         tenant_id: { type: string, format: uuid }
         user_id: { type: string, format: uuid }
@@ -7561,6 +7561,7 @@ components:
               name: { type: string }
         features: { type: object, additionalProperties: { type: boolean } }
         customer_sharing: { $ref: "#/components/schemas/CustomerSharing" }
+        can_offer_store_credit: { type: boolean, description: "One of the member's roles is in the tenant's store_credit_roles: the point of sale may offer store credit (crediário)." }
     ShareVehicle:
       type: object
       additionalProperties: false
@@ -8523,8 +8524,9 @@ components:
     TenantSettings:
       type: object
       additionalProperties: false
-      required: [max_discount_pct, cash_difference_alert, warranty_days_parts, warranty_days_services, warranty_km, customer_sharing]
+      required: [max_discount_pct, cash_difference_alert, warranty_days_parts, warranty_days_services, warranty_km, customer_sharing, store_credit_roles]
       properties:
+        store_credit_roles: { type: array, items: { type: string }, description: "Role codes allowed to offer store credit (crediário) at checkout. Default: owner, manager, finance." }
         warranty_days_parts: { type: integer }
         warranty_days_services: { type: integer }
         warranty_km: { type: integer, description: "0 = no mileage limit" }
@@ -8539,6 +8541,7 @@ components:
         warranty_days_services: { type: integer, minimum: 0, maximum: 3650 }
         warranty_km: { type: integer, minimum: 0, maximum: 1000000 }
         customer_sharing: { $ref: "#/components/schemas/CustomerSharing" }
+        store_credit_roles: { type: array, maxItems: 50, items: { type: string }, description: "Role codes of this tenant allowed to offer store credit; [] means nobody." }
         max_discount_pct: { type: [string, number] }
         cash_difference_alert: { type: [string, number] }
     CashRegister:
