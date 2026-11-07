@@ -3,7 +3,7 @@
 openapi: 3.1.0
 info:
   title: "API do KZ Moto System"
-  version: 0.20.0
+  version: 0.21.0
   summary: Multi-tenant management API for automotive repair shops.
   description: |
     API REST consumida diretamente pelo frontend web (sem BFF).
@@ -32,6 +32,8 @@ servers:
     description: "Desenvolvimento local (make run ou make docker-up)"
 security: []
 tags:
+  - name: messaging
+    description: "Canais de envio (e-mail e WhatsApp Business) da oficina e da plataforma."
   - name: operations
     description: "Sondas de vida e prontidão para orquestradores e balanceadores."
   - name: auth
@@ -703,6 +705,256 @@ paths:
         "401": {$ref: "#/components/responses/Unauthorized"}
         "403": {$ref: "#/components/responses/Forbidden"}
         "422": {$ref: "#/components/responses/ValidationFailed"}
+  /api/v1/tenants/{tenantID}/email-settings:
+    get:
+      operationId: getTenantEmailSettings
+      tags: [messaging]
+      summary: "Configuração de SMTP da oficina"
+      description: "Exige `settings.manage`. A senha nunca é devolvida (password_set
+        indica se há uma guardada)."
+      security: [{bearerAuth: []}]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+      responses:
+        "200":
+          description: The settings (secrets are never returned).
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EmailSettings"
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+    put:
+      operationId: putTenantEmailSettings
+      tags: [messaging]
+      summary: "Salvar a configuração de SMTP da oficina"
+      description: "Exige `settings.manage`. password: omita para manter, string vazia
+        para apagar. Guardar senha exige SECRETS_KEY no servidor (senão 409 secrets_key_missing).
+        Sem configuração ativa, os e-mails da oficina saem pelo remetente da plataforma."
+      security: [{bearerAuth: []}]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EmailSettingsRequest"
+      responses:
+        "200":
+          description: The settings (secrets are never returned).
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EmailSettings"
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "415": {$ref: "#/components/responses/UnsupportedMediaType"}
+        "422": {$ref: "#/components/responses/ValidationFailed"}
+        "409": {$ref: "#/components/responses/Conflict"}
+  /api/v1/tenants/{tenantID}/email-settings/test:
+    post:
+      operationId: testTenantEmailSettings
+      tags: [messaging]
+      summary: "Enviar um e-mail de teste"
+      description: "Exige `settings.manage`. Envia uma mensagem curta com a configuração
+        guardada (mesmo desativada)."
+      security: [{bearerAuth: []}]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChannelTestRequest"
+      responses:
+        "204": {$ref: "#/components/responses/NoContent"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "415": {$ref: "#/components/responses/UnsupportedMediaType"}
+        "422": {$ref: "#/components/responses/ValidationFailed"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "502":
+          description: "The SMTP server or the WhatsApp API refused the message (code
+            delivery_failed; the message explains why)."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /api/v1/platform/email-settings:
+    get:
+      operationId: getPlatformEmailSettings
+      tags: [platform]
+      summary: "Configuração de SMTP da plataforma"
+      description: "Só administradores da plataforma. A senha nunca é devolvida (password_set
+        indica se há uma guardada)."
+      security: [{bearerAuth: []}]
+      responses:
+        "200":
+          description: The settings (secrets are never returned).
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EmailSettings"
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+    put:
+      operationId: putPlatformEmailSettings
+      tags: [platform]
+      summary: "Salvar a configuração de SMTP da plataforma"
+      description: "Só administradores da plataforma. password: omita para manter,
+        string vazia para apagar; guardar senha exige SECRETS_KEY. Ativa, passa a
+        enviar convites e recuperação de senha (vale em até um minuto); senão valem
+        as variáveis SMTP_*."
+      security: [{bearerAuth: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EmailSettingsRequest"
+      responses:
+        "200":
+          description: The settings (secrets are never returned).
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EmailSettings"
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "415": {$ref: "#/components/responses/UnsupportedMediaType"}
+        "422": {$ref: "#/components/responses/ValidationFailed"}
+        "409": {$ref: "#/components/responses/Conflict"}
+  /api/v1/platform/email-settings/test:
+    post:
+      operationId: testPlatformEmailSettings
+      tags: [platform]
+      summary: "Enviar um e-mail de teste"
+      description: "Só administradores da plataforma. Envia uma mensagem curta com
+        a configuração guardada (mesmo desativada)."
+      security: [{bearerAuth: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChannelTestRequest"
+      responses:
+        "204": {$ref: "#/components/responses/NoContent"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "415": {$ref: "#/components/responses/UnsupportedMediaType"}
+        "422": {$ref: "#/components/responses/ValidationFailed"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "502":
+          description: "The SMTP server or the WhatsApp API refused the message (code
+            delivery_failed; the message explains why)."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /api/v1/tenants/{tenantID}/whatsapp-settings:
+    get:
+      operationId: getWhatsAppSettings
+      tags: [messaging]
+      summary: "Configuração do WhatsApp Business (Meta Cloud API)"
+      description: "Exige `settings.manage`. Os tokens nunca são devolvidos."
+      security: [{bearerAuth: []}]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+      responses:
+        "200":
+          description: The settings (secrets are never returned).
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WhatsAppSettings"
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+    put:
+      operationId: putWhatsAppSettings
+      tags: [messaging]
+      summary: "Salvar a configuração do WhatsApp Business"
+      description: "Exige `settings.manage`. Dados da Meta: Phone number ID, WhatsApp
+        Business Account ID e um token de acesso permanente (usuário do sistema).
+        Tokens: omita para manter, string vazia para apagar; guardar exige SECRETS_KEY."
+      security: [{bearerAuth: []}]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WhatsAppSettingsRequest"
+      responses:
+        "200":
+          description: The settings (secrets are never returned).
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WhatsAppSettings"
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "415": {$ref: "#/components/responses/UnsupportedMediaType"}
+        "422": {$ref: "#/components/responses/ValidationFailed"}
+        "409": {$ref: "#/components/responses/Conflict"}
+  /api/v1/tenants/{tenantID}/whatsapp-settings/test:
+    post:
+      operationId: testWhatsAppSettings
+      tags: [messaging]
+      summary: "Enviar uma mensagem de teste no WhatsApp"
+      description: "Exige `settings.manage`. Envia o modelo pré-aprovado hello_world
+        da Meta para `to` (formato internacional); com o app da Meta em desenvolvimento,
+        o número precisa estar liberado lá."
+      security: [{bearerAuth: []}]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChannelTestRequest"
+      responses:
+        "204": {$ref: "#/components/responses/NoContent"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "415": {$ref: "#/components/responses/UnsupportedMediaType"}
+        "422": {$ref: "#/components/responses/ValidationFailed"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "502":
+          description: "The SMTP server or the WhatsApp API refused the message (code
+            delivery_failed; the message explains why)."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
   /api/v1/tenants/{tenantID}/legal-entities:
     get:
       operationId: listLegalEntities
@@ -7905,6 +8157,71 @@ components:
       properties:
         items: {type: array, items: {$ref: "#/components/schemas/CustomerLocation"}}
         next_cursor: {$ref: "#/components/schemas/NextCursor"}
+    EmailSettings:
+      type: object
+      additionalProperties: false
+      required: [configured, enabled, smtp_addr, smtp_tls, username, password_set,
+        from_address, reply_to, updated_at]
+      properties:
+        configured: {type: boolean}
+        enabled: {type: boolean}
+        smtp_addr: {type: string, description: "host:port, e.g. smtp.gmail.com:587"}
+        smtp_tls: {type: string, enum: [starttls, tls]}
+        username: {type: [string, "null"]}
+        password_set: {type: boolean}
+        from_address: {type: string, description: "Sender, e.g. Oficina <contato@oficina.com.br>"}
+        reply_to: {type: [string, "null"]}
+        updated_at: {type: [string, "null"], format: date-time}
+    EmailSettingsRequest:
+      type: object
+      additionalProperties: false
+      required: [enabled, smtp_addr, smtp_tls, from_address]
+      properties:
+        enabled: {type: boolean}
+        smtp_addr: {type: string, maxLength: 255}
+        smtp_tls: {type: string, enum: [starttls, tls]}
+        username: {type: [string, "null"], maxLength: 255}
+        password: {type: [string, "null"], description: "Omit to keep the stored password;
+            empty string clears it."}
+        from_address: {type: string, maxLength: 320}
+        reply_to: {type: [string, "null"], maxLength: 320}
+    WhatsAppSettings:
+      type: object
+      additionalProperties: false
+      required: [configured, enabled, phone_number_id, business_account_id, access_token_set,
+        verify_token_set, display_phone, template_language, updated_at]
+      properties:
+        configured: {type: boolean}
+        enabled: {type: boolean}
+        phone_number_id: {type: string}
+        business_account_id: {type: string}
+        access_token_set: {type: boolean}
+        verify_token_set: {type: boolean}
+        display_phone: {type: [string, "null"]}
+        template_language: {type: string}
+        updated_at: {type: [string, "null"], format: date-time}
+    WhatsAppSettingsRequest:
+      type: object
+      additionalProperties: false
+      required: [enabled, phone_number_id, business_account_id]
+      properties:
+        enabled: {type: boolean}
+        phone_number_id: {type: string, pattern: "^[0-9]{5,30}$"}
+        business_account_id: {type: string, pattern: "^[0-9]{5,30}$"}
+        access_token: {type: [string, "null"], maxLength: 1000, description: "Omit
+            to keep; empty string clears."}
+        verify_token: {type: [string, "null"], maxLength: 200, description: "Webhook
+            verify token; omit to keep."}
+        display_phone: {type: [string, "null"], description: "International format,
+            e.g. +5517999999999"}
+        template_language: {type: string, default: pt_BR}
+    ChannelTestRequest:
+      type: object
+      additionalProperties: false
+      required: [to]
+      properties:
+        to: {type: string, description: "E-mail address, or phone in international
+            format for WhatsApp."}
     TenantFeatures:
       type: object
       additionalProperties: false
