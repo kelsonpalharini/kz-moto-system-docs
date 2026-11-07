@@ -3,7 +3,7 @@
 openapi: 3.1.0
 info:
   title: "API do KZ Moto System"
-  version: 0.23.0
+  version: 0.24.0
   summary: Multi-tenant management API for automotive repair shops.
   description: |
     API REST consumida diretamente pelo frontend web (sem BFF).
@@ -1125,6 +1125,108 @@ paths:
                 $ref: "#/components/schemas/MessageDeliveryList"
         "401": {$ref: "#/components/responses/Unauthorized"}
         "403": {$ref: "#/components/responses/Forbidden"}
+        "422": {$ref: "#/components/responses/ValidationFailed"}
+  /api/v1/platform/tenants/{tenantID}/support-sessions:
+    post:
+      operationId: startSupportSession
+      tags: [platform]
+      summary: "Abrir acesso de suporte (somente leitura) a uma oficina"
+      description: "Só administradores da plataforma. Libera leitura (todas as permissões
+        *.read e todas as lojas) por `minutes` (15 a 480, padrão 120); alterações
+        respondem 403 support_read_only. A auditoria da oficina registra início, motivo
+        e fim."
+      security: [{bearerAuth: []}]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SupportSessionRequest"
+      responses:
+        "201":
+          description: The support session.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SupportSession"
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "415": {$ref: "#/components/responses/UnsupportedMediaType"}
+        "422": {$ref: "#/components/responses/ValidationFailed"}
+        "404": {$ref: "#/components/responses/NotFound"}
+  /api/v1/platform/tenants/{tenantID}/support-sessions/end:
+    post:
+      operationId: endSupportSession
+      tags: [platform]
+      summary: "Encerrar o acesso de suporte"
+      description: "Só administradores da plataforma. Encerra a sessão de suporte
+        ativa (registrada na auditoria da oficina)."
+      security: [{bearerAuth: []}]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+      responses:
+        "204": {$ref: "#/components/responses/NoContent"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+  /api/v1/platform/plans:
+    get:
+      operationId: listPlatformPlans
+      tags: [platform]
+      summary: "Preços dos planos de licença"
+      description: "Só administradores da plataforma. Preço mensal de cada plano,
+        lojas incluídas e preço por loja ativa adicional."
+      security: [{bearerAuth: []}]
+      responses:
+        "200":
+          description: Plan prices.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PlatformPlanList"
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+  /api/v1/platform/plans/{plan}:
+    put:
+      operationId: updatePlatformPlan
+      tags: [platform]
+      summary: "Definir os preços de um plano"
+      description: "Só administradores da plataforma. Usado no painel da plataforma
+        para calcular a receita mensal de cada oficina e a receita recorrente."
+      security: [{bearerAuth: []}]
+      parameters:
+        - name: plan
+          in: path
+          required: true
+          schema: {$ref: "#/components/schemas/LicensePlan"}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PlatformPlanRequest"
+      responses:
+        "200":
+          description: The plan.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PlatformPlan"
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "415": {$ref: "#/components/responses/UnsupportedMediaType"}
         "422": {$ref: "#/components/responses/ValidationFailed"}
   /api/v1/tenants/{tenantID}/legal-entities:
     get:
@@ -8111,7 +8213,7 @@ components:
       additionalProperties: false
       required: [tenant_id, user_id, membership_id, roles, permissions, access_all_locations,
         locations, features, customer_sharing, can_offer_store_credit, license_plan,
-        licensed_features]
+        licensed_features, support_until]
       properties:
         tenant_id: {type: string, format: uuid}
         user_id: {type: string, format: uuid}
@@ -8144,6 +8246,9 @@ components:
             opcionais que o plano da licença inclui; features já vem limitado a eles."}
         can_offer_store_credit: {type: boolean, description: "Um dos perfis do membro
             está em store_credit_roles da oficina: o PDV pode oferecer crediário."}
+        support_until: {type: [string, "null"], format: date-time, description: "Set
+            during a platform administrator's read-only support access (membership_id
+            is the nil UUID then)."}
     ShareVehicle:
       type: object
       additionalProperties: false
@@ -8461,6 +8566,47 @@ components:
               error: {type: [string, "null"]}
               created_at: {type: string, format: date-time}
               sent_at: {type: [string, "null"], format: date-time}
+    SupportSessionRequest:
+      type: object
+      additionalProperties: false
+      required: [reason]
+      properties:
+        reason: {type: string, minLength: 3, maxLength: 300}
+        minutes: {type: integer, minimum: 15, maximum: 480, default: 120}
+    SupportSession:
+      type: object
+      additionalProperties: false
+      required: [id, tenant_id, reason, started_at, expires_at]
+      properties:
+        id: {type: string, format: uuid}
+        tenant_id: {type: string, format: uuid}
+        reason: {type: string}
+        started_at: {type: string, format: date-time}
+        expires_at: {type: string, format: date-time}
+    PlatformPlan:
+      type: object
+      additionalProperties: false
+      required: [plan, monthly_price, included_locations, extra_location_price, updated_at]
+      properties:
+        plan: {$ref: "#/components/schemas/LicensePlan"}
+        monthly_price: {type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$"}
+        included_locations: {type: integer}
+        extra_location_price: {type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$"}
+        updated_at: {type: string, format: date-time}
+    PlatformPlanList:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items: {type: array, items: {$ref: "#/components/schemas/PlatformPlan"}}
+    PlatformPlanRequest:
+      type: object
+      additionalProperties: false
+      required: [monthly_price, included_locations, extra_location_price]
+      properties:
+        monthly_price: {type: [string, number]}
+        included_locations: {type: integer, minimum: 1, maximum: 1000}
+        extra_location_price: {type: [string, number]}
     TenantFeatures:
       type: object
       additionalProperties: false
@@ -11411,23 +11557,29 @@ components:
     PlatformDashboard:
       type: object
       additionalProperties: false
-      required: [since, days, tenants]
+      required: [since, days, tenants, mrr]
       properties:
         since: {type: string, format: date}
         days: {type: integer}
+        mrr: {type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$", description: "Platform
+            monthly recurring revenue."}
         tenants:
           type: array
           items:
             type: object
             additionalProperties: false
             required: [tenant, sales_total, sales_count, work_orders, active_members,
-              daily_sales]
+              daily_sales, locations, monthly_revenue]
             properties:
               tenant: {$ref: "#/components/schemas/Tenant"}
               sales_total: {type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$"}
               sales_count: {type: integer}
               work_orders: {type: integer}
               active_members: {type: integer}
+              locations: {type: integer, description: "Active locations."}
+              monthly_revenue: {type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$", description: "What
+                  the tenant pays per month: plan price + extra locations; 0 for trial,
+                  expired or inactive."}
               daily_sales:
                 type: array
                 items:
@@ -11449,14 +11601,17 @@ components:
     UserTenant:
       type: object
       additionalProperties: false
-      required: [id, name, slug, status, timezone, membership_id]
+      required: [id, name, slug, status, timezone, membership_id, support_until]
       properties:
         id: {type: string, format: uuid}
         name: {type: string}
         slug: {type: string}
         status: {type: string, enum: [active, suspended, closed]}
         timezone: {$ref: "#/components/schemas/Timezone"}
-        membership_id: {type: string, format: uuid}
+        membership_id: {type: [string, "null"], format: uuid, description: "null during
+            a platform support session."}
+        support_until: {type: [string, "null"], format: date-time, description: "Read-only
+            platform support access ends at this time."}
     UserTenantList:
       type: object
       additionalProperties: false
