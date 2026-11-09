@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: KZ Moto System API
-  version: 0.24.0
+  version: 0.25.0
   summary: Multi-tenant management API for automotive repair shops.
   description: |
     REST API consumed directly by the web frontend (no BFF).
@@ -31,6 +31,8 @@ servers:
     description: Local development (make run or make docker-up)
 security: []
 tags:
+  - name: intelligence
+    description: KZ Intelligence - opportunities detected from the workshop's data (license module ai).
   - name: messaging
     description: E-mail and WhatsApp delivery channels.
   - name: operations
@@ -1187,6 +1189,270 @@ paths:
         "400": { $ref: "#/components/responses/BadRequest" }
         "415": { $ref: "#/components/responses/UnsupportedMediaType" }
         "422": { $ref: "#/components/responses/ValidationFailed" }
+
+  /api/v1/tenants/{tenantID}/intelligence/summary:
+    get:
+      operationId: getIntelligenceSummary
+      tags: [intelligence]
+      summary: KZ Intelligence summary
+      description: "Requires the `ai` module (license and settings; `403 feature_disabled` otherwise) and `intelligence.read`. Open opportunities per category (restricted to the caller's stores) and the last analysis."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+      responses:
+        "200":
+          description: The summary.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IntelligenceSummary"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/v1/tenants/{tenantID}/intelligence/opportunities:
+    get:
+      operationId: listIntelligenceOpportunities
+      tags: [intelligence]
+      summary: List opportunities
+      description: "Requires the `ai` module (license and settings; `403 feature_disabled` otherwise) and `intelligence.read`. By priority score (0-100, weights in docs/intelligence.md). Evidence holds numbers and internal ids; names come from the linked records."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - name: status
+          in: query
+          description: Comma-separated statuses (default open,accepted).
+          schema: { type: string }
+        - name: category
+          in: query
+          schema: { type: string, enum: [service, customer, sales, business] }
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+        - name: offset
+          in: query
+          schema: { type: integer, minimum: 0, maximum: 10000, default: 0 }
+      responses:
+        "200":
+          description: Opportunities.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IntelligenceOpportunityList"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+
+  /api/v1/tenants/{tenantID}/intelligence/opportunities/{opportunityID}/{action}:
+    post:
+      operationId: actOnIntelligenceOpportunity
+      tags: [intelligence]
+      summary: Accept, dismiss, resolve or reopen an opportunity
+      description: "Requires the `ai` module (license and settings; `403 feature_disabled` otherwise) and `intelligence.manage`. Records the feedback and an audit entry. Dismissed or resolved findings are not recreated during the cooldown. Never sends messages."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - name: opportunityID
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: action
+          in: path
+          required: true
+          schema: { type: string, enum: [accept, dismiss, resolve, reopen] }
+      responses:
+        "204": { $ref: "#/components/responses/NoContent" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+
+  /api/v1/tenants/{tenantID}/intelligence/runs:
+    post:
+      operationId: runIntelligenceAnalysis
+      tags: [intelligence]
+      summary: Analyze now
+      description: "Requires the `ai` module (license and settings; `403 feature_disabled` otherwise) and `intelligence.manage`. Runs the detectors (SQL rules, no AI), updates or creates opportunities and expires the ones no longer found. One analysis per workshop at a time: 409 analysis_in_progress; 409 intelligence_disabled when turned off."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+      responses:
+        "201":
+          description: The finished analysis.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IntelligenceRun"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /api/v1/tenants/{tenantID}/intelligence/preferences:
+    get:
+      operationId: getIntelligencePreferences
+      tags: [intelligence]
+      summary: Analysis preferences
+      description: "Requires the `ai` module (license and settings; `403 feature_disabled` otherwise) and `intelligence.read`. Defaults when never saved."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+      responses:
+        "200":
+          description: The preferences.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IntelligencePreferences"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+    put:
+      operationId: putIntelligencePreferences
+      tags: [intelligence]
+      summary: Save the analysis preferences
+      description: "Requires the `ai` module (license and settings; `403 feature_disabled` otherwise) and `intelligence.manage`."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/IntelligencePreferences"
+      responses:
+        "200":
+          description: The saved preferences.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IntelligencePreferences"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+
+  /api/v1/tenants/{tenantID}/maintenance-intervals:
+    get:
+      operationId: listMaintenanceIntervals
+      tags: [intelligence]
+      summary: Maintenance intervals of the workshop
+      description: "Requires the `ai` module (license and settings; `403 feature_disabled` otherwise) and `intelligence.read`. Entered by the workshop; used to suggest services that are due (never invented)."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+      responses:
+        "200":
+          description: Intervals.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MaintenanceIntervalList"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+    post:
+      operationId: createMaintenanceInterval
+      tags: [intelligence]
+      summary: Add a maintenance interval
+      description: "Requires the `ai` module (license and settings; `403 feature_disabled` otherwise) and `intelligence.manage`. A service matches a work order line by product or by a text contained in the line description; every_km and/or every_months."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MaintenanceIntervalRequest"
+      responses:
+        "201":
+          description: The interval.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MaintenanceInterval"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+
+  /api/v1/tenants/{tenantID}/maintenance-intervals/{intervalID}:
+    put:
+      operationId: updateMaintenanceInterval
+      tags: [intelligence]
+      summary: Update a maintenance interval
+      description: "Requires the `ai` module (license and settings; `403 feature_disabled` otherwise) and `intelligence.manage`."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - name: intervalID
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MaintenanceIntervalRequest"
+      responses:
+        "200":
+          description: The interval.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MaintenanceInterval"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+    delete:
+      operationId: deleteMaintenanceInterval
+      tags: [intelligence]
+      summary: Delete a maintenance interval
+      description: "Requires the `ai` module (license and settings; `403 feature_disabled` otherwise) and `intelligence.manage`."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - name: intervalID
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "204": { $ref: "#/components/responses/NoContent" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
 
   /api/v1/tenants/{tenantID}/legal-entities:
     get:
@@ -8424,6 +8690,142 @@ components:
         monthly_price: { type: [string, number] }
         included_locations: { type: integer, minimum: 1, maximum: 1000 }
         extra_location_price: { type: [string, number] }
+    IntelligenceRun:
+      type: object
+      additionalProperties: false
+      required: [id, trigger, status, started_at, finished_at, opportunities_detected, opportunities_created, opportunities_expired, error]
+      properties:
+        id: { type: string, format: uuid }
+        trigger: { type: string, enum: [manual, scheduled] }
+        status: { type: string, enum: [running, succeeded, failed] }
+        started_at: { type: string, format: date-time }
+        finished_at: { type: [string, "null"], format: date-time }
+        opportunities_detected: { type: integer }
+        opportunities_created: { type: integer }
+        opportunities_expired: { type: integer }
+        error: { type: [string, "null"] }
+    IntelligenceSummary:
+      type: object
+      additionalProperties: false
+      required: [enabled, open, high_priority, categories, last_run, scoring_version]
+      properties:
+        enabled: { type: boolean }
+        open: { type: integer }
+        high_priority: { type: integer, description: "Open opportunities with priority score >= 70." }
+        scoring_version: { type: integer }
+        categories:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [category, open, high_priority, potential_value]
+            properties:
+              category: { type: string, enum: [service, customer, sales, business] }
+              open: { type: integer }
+              high_priority: { type: integer }
+              potential_value: { type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
+        last_run:
+          oneOf:
+            - $ref: "#/components/schemas/IntelligenceRun"
+            - type: "null"
+    IntelligenceOpportunity:
+      type: object
+      additionalProperties: false
+      required: [id, location_id, category, type, subject, party, priority_score, relevance, commercial_potential, data_confidence, urgency, scoring_version, potential_value, evidence, status, detected_at, last_seen_at, acted_at]
+      properties:
+        id: { type: string, format: uuid }
+        location_id: { type: [string, "null"], format: uuid }
+        category: { type: string, enum: [service, customer, sales, business] }
+        type:
+          type: string
+          description: "declined_item, maintenance_due, inactive_customer, high_mileage, stale_stock, frequent_pair, busy_hours, revenue_change, ticket_change, top_margin_items."
+        subject:
+          type: object
+          additionalProperties: false
+          required: [type, id, label, code]
+          properties:
+            type: { type: string, enum: [vehicle, party, product, work_order, tenant] }
+            id: { type: [string, "null"], format: uuid }
+            label: { type: [string, "null"], description: "Vehicle make/model or product name." }
+            code: { type: [string, "null"], description: "Plate or SKU." }
+        party:
+          oneOf:
+            - type: object
+              additionalProperties: false
+              required: [id, name]
+              properties:
+                id: { type: string, format: uuid }
+                name: { type: [string, "null"] }
+            - type: "null"
+        priority_score: { type: number, minimum: 0, maximum: 100 }
+        relevance: { type: number, minimum: 0, maximum: 1 }
+        commercial_potential: { type: number, minimum: 0, maximum: 1 }
+        data_confidence: { type: number, minimum: 0, maximum: 1 }
+        urgency: { type: number, minimum: 0, maximum: 1 }
+        scoring_version: { type: integer }
+        potential_value:
+          type: [string, "null"]
+          pattern: "^-?[0-9]+(\\.[0-9]+)?$"
+          description: "Estimated value involved; not a promise of revenue."
+        evidence: { type: object, additionalProperties: true, description: "Type-specific numbers and internal ids (see docs/intelligence.md)." }
+        status: { type: string, enum: [open, accepted, dismissed, resolved, expired] }
+        detected_at: { type: string, format: date-time }
+        last_seen_at: { type: string, format: date-time }
+        acted_at: { type: [string, "null"], format: date-time }
+    IntelligenceOpportunityList:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items: { type: array, items: { $ref: "#/components/schemas/IntelligenceOpportunity" } }
+    IntelligenceActionRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        note: { type: [string, "null"], maxLength: 500 }
+    IntelligencePreferences:
+      type: object
+      additionalProperties: false
+      required: [enabled, categories, inactive_after_days, stale_stock_days, dismiss_cooldown_days]
+      properties:
+        enabled: { type: boolean }
+        categories: { type: array, items: { type: string, enum: [service, customer, sales, business] } }
+        inactive_after_days: { type: integer, minimum: 30, maximum: 730, description: "Customer without visits for this long is inactive (default 180)." }
+        stale_stock_days: { type: integer, minimum: 30, maximum: 730, description: "Stock without movement for this long is stale (default 90)." }
+        dismiss_cooldown_days: { type: integer, minimum: 1, maximum: 365, description: "A dismissed or resolved finding is not recreated for this long (default 30)." }
+    MaintenanceInterval:
+      type: object
+      additionalProperties: false
+      required: [id, name, match_text, product_id, vehicle_model_id, every_km, every_months, active, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        match_text: { type: [string, "null"] }
+        product_id: { type: [string, "null"], format: uuid }
+        vehicle_model_id: { type: [string, "null"], format: uuid }
+        every_km: { type: [integer, "null"] }
+        every_months: { type: [integer, "null"] }
+        active: { type: boolean }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    MaintenanceIntervalList:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items: { type: array, items: { $ref: "#/components/schemas/MaintenanceInterval" } }
+    MaintenanceIntervalRequest:
+      type: object
+      additionalProperties: false
+      required: [name]
+      properties:
+        name: { type: string, minLength: 2, maxLength: 80 }
+        match_text: { type: [string, "null"], maxLength: 80, description: "Text contained in the work order line description (case-insensitive)." }
+        product_id: { type: [string, "null"], format: uuid }
+        vehicle_model_id: { type: [string, "null"], format: uuid, description: "Only vehicles of this catalogue model." }
+        every_km: { type: [integer, "null"], minimum: 100, maximum: 200000 }
+        every_months: { type: [integer, "null"], minimum: 1, maximum: 120 }
+        active: { type: boolean }
     TenantFeatures:
       type: object
       additionalProperties: false
