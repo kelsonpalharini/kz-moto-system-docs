@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: KZ Moto System API
-  version: 0.28.0
+  version: 0.29.0
   summary: Multi-tenant management API for automotive repair shops.
   description: |
     REST API consumed directly by the web frontend (no BFF).
@@ -8761,7 +8761,7 @@ components:
         to: { type: string, description: "E-mail address, or phone in international format for WhatsApp." }
     MessageEvent:
       type: string
-      enum: [work_order_opened, work_order_started, work_order_completed, work_order_delivered, appointment_reminder]
+      enum: [work_order_opened, work_order_started, work_order_completed, work_order_delivered, appointment_reminder, sale_completed]
     MessageTemplate:
       type: object
       additionalProperties: false
@@ -8814,7 +8814,7 @@ components:
               id: { type: string, format: uuid }
               event: { type: string }
               channel: { type: string, enum: [email, whatsapp] }
-              source_type: { type: string, enum: [work_order, appointment] }
+              source_type: { type: string, enum: [work_order, appointment, sale] }
               source_id: { type: string, format: uuid }
               offset_minutes: { type: integer }
               party_name: { type: [string, "null"] }
