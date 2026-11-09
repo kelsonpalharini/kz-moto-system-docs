@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: KZ Moto System API
-  version: 0.25.0
+  version: 0.26.0
   summary: Multi-tenant management API for automotive repair shops.
   description: |
     REST API consumed directly by the web frontend (no BFF).
@@ -1296,6 +1296,31 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "409": { $ref: "#/components/responses/Conflict" }
 
+  /api/v1/tenants/{tenantID}/intelligence/effectiveness:
+    get:
+      operationId: getIntelligenceEffectiveness
+      tags: [intelligence]
+      summary: Effectiveness of the opportunities
+      description: "Requires the `ai` module and `intelligence.read`. Opportunities detected in the last `days` (7-365, default 90) by category and type, with their current status; acted_potential_value sums accepted and resolved ones (an estimate, not revenue)."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - name: days
+          in: query
+          schema: { type: integer, minimum: 7, maximum: 365, default: 90 }
+      responses:
+        "200":
+          description: Counts per type.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IntelligenceEffectiveness"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
   /api/v1/tenants/{tenantID}/intelligence/preferences:
     get:
       operationId: getIntelligencePreferences
@@ -8690,6 +8715,29 @@ components:
         monthly_price: { type: [string, number] }
         included_locations: { type: integer, minimum: 1, maximum: 1000 }
         extra_location_price: { type: [string, number] }
+    IntelligenceEffectiveness:
+      type: object
+      additionalProperties: false
+      required: [days, items, acted_potential_value]
+      properties:
+        days: { type: integer }
+        acted_potential_value: { type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
+        items:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [category, type, detected, open, accepted, resolved, dismissed, expired, potential_value]
+            properties:
+              category: { type: string, enum: [service, customer, sales, business] }
+              type: { type: string }
+              detected: { type: integer }
+              open: { type: integer }
+              accepted: { type: integer }
+              resolved: { type: integer }
+              dismissed: { type: integer }
+              expired: { type: integer }
+              potential_value: { type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
     IntelligenceRun:
       type: object
       additionalProperties: false
