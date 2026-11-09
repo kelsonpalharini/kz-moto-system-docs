@@ -2,7 +2,7 @@
 
 Live Swagger UI: https://kelsonpalharini.github.io/kz-moto-system-docs/
 
-Contract: [openapi.yaml](openapi.yaml) (OpenAPI 3.1, API version 0.26.0); Brazilian Portuguese:
+Contract: [openapi.yaml](openapi.yaml) (OpenAPI 3.1, API version 0.27.0); Brazilian Portuguese:
 [openapi.pt-BR.yaml](openapi.pt-BR.yaml). The page has a language selector (English / Português).
 
 Platform brand assets (KZ Moto System logo, icon and sign-in image) live in [brand/](brand/)

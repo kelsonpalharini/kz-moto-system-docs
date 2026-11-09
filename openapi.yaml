@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: KZ Moto System API
-  version: 0.26.0
+  version: 0.27.0
   summary: Multi-tenant management API for automotive repair shops.
   description: |
     REST API consumed directly by the web frontend (no BFF).
@@ -1478,6 +1478,107 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/platform/ai-settings:
+    get:
+      operationId: getPlatformAISettings
+      tags: [platform]
+      summary: KZ Intelligence AI settings
+      description: "Platform administrators only. Generative AI is off until enabled here: provider (anthropic or openai), model, API key (write-only, encrypted with SECRETS_KEY), license plans that get it, monthly platform budget, calls per tenant per month and token prices used for the cost estimate."
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: The settings.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PlatformAISettings"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    put:
+      operationId: putPlatformAISettings
+      tags: [platform]
+      summary: Save the AI settings
+      description: "Platform administrators only. api_key absent keeps the stored key, empty string removes it. Enabling requires model and key. 409 secrets_key_missing when the server has no SECRETS_KEY."
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PlatformAISettingsRequest"
+      responses:
+        "200":
+          description: The saved settings.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PlatformAISettings"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+  /api/v1/platform/ai-settings/test:
+    post:
+      operationId: testPlatformAI
+      tags: [platform]
+      summary: Test the AI provider
+      description: "Platform administrators only. Sends a tiny request without any workshop data (works even while disabled). 409 ai_not_configured / secrets_key_missing; 502 ai_provider_error with the provider's message."
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: The provider answered.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PlatformAITestResult"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "502":
+          description: The provider failed.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /api/v1/platform/ai-usage:
+    get:
+      operationId: getPlatformAIUsage
+      tags: [platform]
+      summary: AI usage and estimated cost per workshop
+      description: "Platform administrators only. Calls, failures, tokens and estimated cost of the month (default: current)."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: month
+          in: query
+          schema: { type: string, pattern: "^[0-9]{4}-[0-9]{2}$" }
+      responses:
+        "200":
+          description: Usage.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PlatformAIUsage"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
 
   /api/v1/tenants/{tenantID}/legal-entities:
     get:
@@ -8738,6 +8839,64 @@ components:
               dismissed: { type: integer }
               expired: { type: integer }
               potential_value: { type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
+    PlatformAISettings:
+      type: object
+      additionalProperties: false
+      required: [enabled, provider, model, has_api_key, plans, monthly_budget_usd, max_calls_per_tenant_month, input_usd_per_mtok, output_usd_per_mtok, updated_at]
+      properties:
+        enabled: { type: boolean }
+        provider: { type: string, enum: [anthropic, openai] }
+        model: { type: string }
+        has_api_key: { type: boolean }
+        plans: { type: array, items: { $ref: "#/components/schemas/LicensePlan" } }
+        monthly_budget_usd: { type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
+        max_calls_per_tenant_month: { type: integer }
+        input_usd_per_mtok: { type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
+        output_usd_per_mtok: { type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
+        updated_at: { type: string, format: date-time }
+    PlatformAISettingsRequest:
+      type: object
+      additionalProperties: false
+      required: [enabled, provider, model, plans, monthly_budget_usd, max_calls_per_tenant_month, input_usd_per_mtok, output_usd_per_mtok]
+      properties:
+        enabled: { type: boolean }
+        provider: { type: string, enum: [anthropic, openai] }
+        model: { type: string, maxLength: 100 }
+        api_key: { type: [string, "null"], maxLength: 400, description: "Write-only. Absent keeps, empty removes." }
+        plans: { type: array, items: { $ref: "#/components/schemas/LicensePlan" } }
+        monthly_budget_usd: { type: [string, number] }
+        max_calls_per_tenant_month: { type: integer, minimum: 0, maximum: 10000 }
+        input_usd_per_mtok: { type: [string, number] }
+        output_usd_per_mtok: { type: [string, number] }
+    PlatformAITestResult:
+      type: object
+      additionalProperties: false
+      required: [ok, input_tokens, output_tokens]
+      properties:
+        ok: { type: boolean }
+        input_tokens: { type: integer }
+        output_tokens: { type: integer }
+    PlatformAIUsage:
+      type: object
+      additionalProperties: false
+      required: [month, items, total_cost_usd]
+      properties:
+        month: { type: string }
+        total_cost_usd: { type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
+        items:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [tenant_id, tenant_name, calls, failures, input_tokens, output_tokens, estimated_cost_usd]
+            properties:
+              tenant_id: { type: string, format: uuid }
+              tenant_name: { type: string }
+              calls: { type: integer }
+              failures: { type: integer }
+              input_tokens: { type: integer }
+              output_tokens: { type: integer }
+              estimated_cost_usd: { type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
     IntelligenceRun:
       type: object
       additionalProperties: false
@@ -8755,12 +8914,38 @@ components:
     IntelligenceSummary:
       type: object
       additionalProperties: false
-      required: [enabled, open, high_priority, categories, last_run, scoring_version]
+      required: [enabled, open, high_priority, categories, last_run, scoring_version, ai]
       properties:
         enabled: { type: boolean }
         open: { type: integer }
         high_priority: { type: integer, description: "Open opportunities with priority score >= 70." }
         scoring_version: { type: integer }
+        ai:
+          type: object
+          additionalProperties: false
+          required: [available, summary]
+          description: "Generative AI layer: available when the platform owner enabled it for the tenant's plan and the ai module is on."
+          properties:
+            available: { type: boolean }
+            summary:
+              oneOf:
+                - type: object
+                  additionalProperties: false
+                  required: [headline, bullets, suggestions, generated_at]
+                  properties:
+                    headline: { type: string }
+                    bullets: { type: array, items: { type: string } }
+                    suggestions:
+                      type: array
+                      items:
+                        type: object
+                        additionalProperties: false
+                        required: [opportunity_id, message]
+                        properties:
+                          opportunity_id: { type: string, format: uuid }
+                          message: { type: string, description: "Draft with {{cliente}} and {{moto}} placeholders; staff reviews before sending." }
+                    generated_at: { type: string, format: date-time }
+                - type: "null"
         categories:
           type: array
           items:
