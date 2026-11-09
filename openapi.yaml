@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: KZ Moto System API
-  version: 0.27.0
+  version: 0.28.0
   summary: Multi-tenant management API for automotive repair shops.
   description: |
     REST API consumed directly by the web frontend (no BFF).
@@ -1546,6 +1546,53 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "409": { $ref: "#/components/responses/Conflict" }
+        "502":
+          description: The provider failed.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /api/v1/platform/ai-insights:
+    get:
+      operationId: getPlatformAIInsights
+      tags: [platform]
+      summary: AI suggestions to engage the workshops
+      description: "Platform administrators only. Latest daily AI summary for the platform owner (renewals, upgrades, free trials, inactive workshops) and the last call status; available is false while the AI is off in /platform/ai-settings."
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: The AI state and the latest platform summary.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PlatformAIInsights"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/platform/ai-insights/run:
+    post:
+      operationId: runPlatformAIInsights
+      tags: [platform]
+      summary: Generate the platform AI summary now
+      description: "Platform administrators only. At most once per day (later calls return the current summary). Sends aggregated numbers per workshop (plan, license days left, price, sales and work orders of 30 days, users, stores) and the workshop name; no customer data. Counts against the monthly budget."
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: The AI state and the latest platform summary.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PlatformAIInsights"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "502":
           description: The provider failed.
           headers:
@@ -8839,6 +8886,42 @@ components:
               dismissed: { type: integer }
               expired: { type: integer }
               potential_value: { type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
+    PlatformAIInsights:
+      type: object
+      additionalProperties: false
+      required: [available, summary, last_call]
+      properties:
+        available: { type: boolean }
+        summary:
+          oneOf:
+            - type: object
+              additionalProperties: false
+              required: [headline, bullets, suggestions, generated_at]
+              properties:
+                headline: { type: string }
+                bullets: { type: array, items: { type: string } }
+                suggestions:
+                  type: array
+                  items:
+                    type: object
+                    additionalProperties: false
+                    required: [tenant_id, tenant_name, message]
+                    properties:
+                      tenant_id: { type: string, format: uuid }
+                      tenant_name: { type: string }
+                      message: { type: string }
+                generated_at: { type: string, format: date-time }
+            - type: "null"
+        last_call:
+          oneOf:
+            - type: object
+              additionalProperties: false
+              required: [status, error, created_at]
+              properties:
+                status: { type: string, enum: [pending, ok, invalid, error] }
+                error: { type: [string, "null"] }
+                created_at: { type: string, format: date-time }
+            - type: "null"
     PlatformAISettings:
       type: object
       additionalProperties: false
