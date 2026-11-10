@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: KZ Moto System API
-  version: 0.30.0
+  version: 0.31.0
   summary: Multi-tenant management API for automotive repair shops.
   description: |
     REST API consumed directly by the web frontend (no BFF).
@@ -1773,6 +1773,142 @@ paths:
         "400": { $ref: "#/components/responses/BadRequest" }
         "415": { $ref: "#/components/responses/UnsupportedMediaType" }
         "422": { $ref: "#/components/responses/ValidationFailed" }
+  /api/v1/tenants/{tenantID}/sales/{saleID}/nfce:
+    post:
+      operationId: issueSaleNFCe
+      tags: [fiscal]
+      summary: Issue the NFC-e of a sale
+      description: "Requires `fiscal.issue`. Completed sale only; needs the store's legal entity (CNPJ), NCM on every product and NFC-e on in the fiscal settings. Synchronous at Focus NFe (ref = document id, one live document per sale). When authorized, the customer gets the fiscal_document_issued message (e-mail with XML and DANFE attached, WhatsApp with links), with consent."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - name: saleID
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "201":
+          description: The document (authorized, rejected or error, with the provider message).
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FiscalDocument"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+        "502":
+          description: Focus NFe rejected the token.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /api/v1/tenants/{tenantID}/sales/{saleID}/fiscal-documents:
+    get:
+      operationId: listSaleFiscalDocuments
+      tags: [fiscal]
+      summary: Fiscal documents of a sale
+      description: "Requires `fiscal.read`. Newest first."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - name: saleID
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: The documents.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FiscalDocumentList"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/tenants/{tenantID}/fiscal-documents:
+    get:
+      operationId: listFiscalDocuments
+      tags: [fiscal]
+      summary: Latest fiscal documents
+      description: "Requires `fiscal.read`."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+      responses:
+        "200":
+          description: The documents.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FiscalDocumentList"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+  /api/v1/tenants/{tenantID}/fiscal-documents/{documentID}/cancel:
+    post:
+      operationId: cancelFiscalDocument
+      tags: [fiscal]
+      summary: Cancel an authorized NFC-e
+      description: "Requires `fiscal.issue`. Reason of 15 to 255 characters; SEFAZ accepts NFC-e cancellation up to 30 minutes after issuing (502 fiscal_cancel_refused otherwise)."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - name: documentID
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [reason]
+              properties:
+                reason: { type: string, minLength: 15, maxLength: 255 }
+      responses:
+        "200":
+          description: The cancelled document.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FiscalDocument"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+        "502":
+          description: Focus NFe or SEFAZ refused the cancellation.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
   /api/v1/tenants/{tenantID}/legal-entities:
     get:
       operationId: listLegalEntities
@@ -8907,7 +9043,7 @@ components:
         to: { type: string, description: "E-mail address, or phone in international format for WhatsApp." }
     MessageEvent:
       type: string
-      enum: [work_order_opened, work_order_started, work_order_completed, work_order_delivered, appointment_reminder, sale_completed]
+      enum: [work_order_opened, work_order_started, work_order_completed, work_order_delivered, appointment_reminder, sale_completed, fiscal_document_issued]
     MessageTemplate:
       type: object
       additionalProperties: false
@@ -9032,6 +9168,36 @@ components:
               dismissed: { type: integer }
               expired: { type: integer }
               potential_value: { type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$" }
+    FiscalDocument:
+      type: object
+      additionalProperties: false
+      required: [id, kind, source_type, source_id, environment, status, number, series, access_key, total, provider_status, message, xml_url, danfe_url, qrcode_url, cancel_reason, created_at, authorized_at, cancelled_at]
+      properties:
+        id: { type: string, format: uuid }
+        kind: { type: string, enum: [nfce, nfse, nfe] }
+        source_type: { type: string, enum: [sale, work_order] }
+        source_id: { type: string, format: uuid }
+        environment: { type: string, enum: [homologation, production] }
+        status: { type: string, enum: [processing, authorized, rejected, cancelled, error] }
+        number: { type: [string, "null"] }
+        series: { type: [string, "null"] }
+        access_key: { type: [string, "null"] }
+        total: { type: string }
+        provider_status: { type: [string, "null"] }
+        message: { type: [string, "null"] }
+        xml_url: { type: [string, "null"] }
+        danfe_url: { type: [string, "null"] }
+        qrcode_url: { type: [string, "null"] }
+        cancel_reason: { type: [string, "null"] }
+        created_at: { type: string, format: date-time }
+        authorized_at: { type: [string, "null"], format: date-time }
+        cancelled_at: { type: [string, "null"], format: date-time }
+    FiscalDocumentList:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items: { type: array, items: { $ref: "#/components/schemas/FiscalDocument" } }
     FiscalSettings:
       type: object
       additionalProperties: false
