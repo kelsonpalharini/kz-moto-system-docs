@@ -3,7 +3,7 @@
 openapi: 3.1.0
 info:
   title: "API do KZ Moto System"
-  version: 0.32.0
+  version: 0.33.0
   summary: Multi-tenant management API for automotive repair shops.
   description: |
     API REST consumida diretamente pelo frontend web (sem BFF).
@@ -1984,15 +1984,61 @@ paths:
         "401": {$ref: "#/components/responses/Unauthorized"}
         "403": {$ref: "#/components/responses/Forbidden"}
         "404": {$ref: "#/components/responses/NotFound"}
+  /api/v1/tenants/{tenantID}/work-orders/{workOrderID}/fiscal-notes:
+    post:
+      operationId: issueWorkOrderFiscalNotes
+      tags: [fiscal]
+      summary: "Emitir as notas fiscais de uma OS"
+      description: "Exige `fiscal.issue`. OS concluída ou entregue. Emite todas as
+        notas ligadas que ainda faltam: a NFS-e (mão de obra, serviços e taxas; `nfse_enabled`)
+        e a nota das peças (`wo_parts_enabled`): NFC-e para pessoa física ou cliente
+        sem documento, NF-e (modelo 55) para empresa (exige o endereço do cliente).
+        As peças precisam ser produtos do catálogo com NCM. Tudo é validado antes
+        de enviar; notas vivas são mantidas, então chamar de novo só tenta as rejeitadas
+        ou com falha. NF-e e NFS-e são assíncronas (consultadas a cada minuto). Nota
+        das peças autorizada envia a mensagem parts_note_issued. 409 fiscal_notes_disabled
+        quando as duas estão desligadas."
+      security: [{bearerAuth: []}]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - name: workOrderID
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        "201":
+          description: All fiscal documents of the work order after issuing, newest
+            first.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FiscalDocumentList"
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "422": {$ref: "#/components/responses/ValidationFailed"}
+        "502":
+          description: Focus NFe rejected the token.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
   /api/v1/tenants/{tenantID}/fiscal-documents/{documentID}/refresh:
     post:
       operationId: refreshFiscalDocument
       tags: [fiscal]
-      summary: "Consultar a situação de uma NFS-e em processamento"
+      summary: "Consultar a situação de uma NFS-e ou NF-e em processamento"
       description: "Exige `fiscal.issue`. Consulta na Focus NFe a situação de uma
-        NFS-e em `processing` e registra o resultado (autorizada, rejeitada ou ainda
-        em processamento); outros documentos voltam sem mudança. Quando fica autorizada,
-        a mensagem ao cliente sai uma única vez."
+        NFS-e ou NF-e em `processing` e registra o resultado (autorizada, rejeitada
+        ou ainda em processamento); outros documentos voltam sem mudança. Quando fica
+        autorizada, a mensagem ao cliente sai uma única vez."
       security: [{bearerAuth: []}]
       parameters:
         - $ref: "#/components/parameters/TenantID"
@@ -2052,10 +2098,11 @@ paths:
     post:
       operationId: cancelFiscalDocument
       tags: [fiscal]
-      summary: "Cancelar uma NFC-e ou NFS-e autorizada"
+      summary: "Cancelar uma NFC-e, NF-e ou NFS-e autorizada"
       description: "Exige `fiscal.issue`. Justificativa de 15 a 255 caracteres; a
-        SEFAZ aceita cancelar NFC-e até 30 minutos após a emissão, e a NFS-e segue
-        o prazo do município (senão 502 fiscal_cancel_refused com a mensagem do provedor)."
+        SEFAZ aceita cancelar NFC-e até 30 minutos e NF-e até 24 horas após a emissão,
+        e a NFS-e segue o prazo do município (senão 502 fiscal_cancel_refused com
+        a mensagem do provedor)."
       security: [{bearerAuth: []}]
       parameters:
         - $ref: "#/components/parameters/TenantID"
@@ -9372,7 +9419,8 @@ components:
     MessageEvent:
       type: string
       enum: [work_order_opened, work_order_started, work_order_completed, work_order_delivered,
-        appointment_reminder, sale_completed, fiscal_document_issued, nfse_issued]
+        appointment_reminder, sale_completed, fiscal_document_issued, nfse_issued,
+        parts_note_issued]
     MessageTemplate:
       type: object
       additionalProperties: false
@@ -9553,7 +9601,7 @@ components:
         nfce_enabled, nfce_series, pdv_default_fiscal, nfse_enabled, nfse_series,
         nfse_next_number_homologation, nfse_next_number_production, nfse_service_code,
         nfse_municipal_code, nfse_nbs_code, nfse_simples_regime, nfse_send_reform,
-        nfse_ibs_cbs_cst, nfse_ibs_cbs_class]
+        nfse_ibs_cbs_cst, nfse_ibs_cbs_class, wo_parts_enabled, nfe_series]
       properties:
         environment: {type: string, enum: [homologation, production]}
         has_token_homologation: {type: boolean}
@@ -9584,6 +9632,10 @@ components:
         nfse_ibs_cbs_cst: {type: string, description: "IBS/CBS CST (3 digits)."}
         nfse_ibs_cbs_class: {type: string, description: "IBS/CBS tax classification
             (cClassTrib, 6 digits)."}
+        wo_parts_enabled: {type: boolean, description: "Issue the parts invoice of
+            work orders with the NFS-e: NFC-e for people (or no document), NF-e for
+            companies."}
+        nfe_series: {type: integer, description: "NF-e (model 55) series (1 to 999)."}
     FiscalSettingsRequest:
       type: object
       additionalProperties: false
@@ -9610,6 +9662,9 @@ components:
         nfse_send_reform: {type: boolean}
         nfse_ibs_cbs_cst: {type: string, pattern: "^[0-9]{3}$"}
         nfse_ibs_cbs_class: {type: string, pattern: "^[0-9]{6}$"}
+        wo_parts_enabled: {type: boolean, description: "Absent keeps the current value."}
+        nfe_series: {type: integer, minimum: 1, maximum: 999, description: "Absent
+            keeps the current value."}
     OkResult:
       type: object
       additionalProperties: false

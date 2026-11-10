@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: KZ Moto System API
-  version: 0.32.0
+  version: 0.33.0
   summary: Multi-tenant management API for automotive repair shops.
   description: |
     REST API consumed directly by the web frontend (no BFF).
@@ -1898,12 +1898,49 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/tenants/{tenantID}/work-orders/{workOrderID}/fiscal-notes:
+    post:
+      operationId: issueWorkOrderFiscalNotes
+      tags: [fiscal]
+      summary: Issue the invoices of a work order
+      description: "Requires `fiscal.issue`. Completed or delivered work order. Issues every invoice that is turned on and still missing: the NFS-e (labour, services, fees; `nfse_enabled`) and the parts invoice (`wo_parts_enabled`): NFC-e for people or customers without a document, NF-e (model 55) for companies (needs the customer's address). Parts must be catalogue products with NCM. Everything is validated before anything is sent; live documents are kept, so calling again only retries rejected or failed ones. NF-e and NFS-e are asynchronous (checked every minute). Authorized parts invoices send the parts_note_issued message. 409 fiscal_notes_disabled when both are off."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - name: workOrderID
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "201":
+          description: All fiscal documents of the work order after issuing, newest first.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FiscalDocumentList"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+        "502":
+          description: Focus NFe rejected the token.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
   /api/v1/tenants/{tenantID}/fiscal-documents/{documentID}/refresh:
     post:
       operationId: refreshFiscalDocument
       tags: [fiscal]
-      summary: Check the situation of a processing NFS-e
-      description: "Requires `fiscal.issue`. Asks Focus NFe for the current situation of a `processing` NFS-e and records it (authorized, rejected or still processing); other documents are returned unchanged. When it becomes authorized, the customer message is sent once."
+      summary: Check the situation of a processing NFS-e or NF-e
+      description: "Requires `fiscal.issue`. Asks Focus NFe for the current situation of a `processing` NFS-e or NF-e and records it (authorized, rejected or still processing); other documents are returned unchanged. When it becomes authorized, the customer message is sent once."
       security: [{ bearerAuth: [] }]
       parameters:
         - $ref: "#/components/parameters/TenantID"
@@ -1963,8 +2000,8 @@ paths:
     post:
       operationId: cancelFiscalDocument
       tags: [fiscal]
-      summary: Cancel an authorized NFC-e or NFS-e
-      description: "Requires `fiscal.issue`. Reason of 15 to 255 characters; SEFAZ accepts NFC-e cancellation up to 30 minutes after issuing, and the NFS-e follows the municipality's deadline (502 fiscal_cancel_refused with the provider message otherwise)."
+      summary: Cancel an authorized NFC-e, NF-e or NFS-e
+      description: "Requires `fiscal.issue`. Reason of 15 to 255 characters; SEFAZ accepts NFC-e cancellation up to 30 minutes and NF-e up to 24 hours after issuing, and the NFS-e follows the municipality's deadline (502 fiscal_cancel_refused with the provider message otherwise)."
       security: [{ bearerAuth: [] }]
       parameters:
         - $ref: "#/components/parameters/TenantID"
@@ -9142,7 +9179,7 @@ components:
         to: { type: string, description: "E-mail address, or phone in international format for WhatsApp." }
     MessageEvent:
       type: string
-      enum: [work_order_opened, work_order_started, work_order_completed, work_order_delivered, appointment_reminder, sale_completed, fiscal_document_issued, nfse_issued]
+      enum: [work_order_opened, work_order_started, work_order_completed, work_order_delivered, appointment_reminder, sale_completed, fiscal_document_issued, nfse_issued, parts_note_issued]
     MessageTemplate:
       type: object
       additionalProperties: false
@@ -9308,7 +9345,7 @@ components:
       additionalProperties: false
       required: [environment, has_token_homologation, has_token_production, allow_production, nfce_enabled, nfce_series, pdv_default_fiscal,
                  nfse_enabled, nfse_series, nfse_next_number_homologation, nfse_next_number_production, nfse_service_code, nfse_municipal_code,
-                 nfse_nbs_code, nfse_simples_regime, nfse_send_reform, nfse_ibs_cbs_cst, nfse_ibs_cbs_class]
+                 nfse_nbs_code, nfse_simples_regime, nfse_send_reform, nfse_ibs_cbs_cst, nfse_ibs_cbs_class, wo_parts_enabled, nfe_series]
       properties:
         environment: { type: string, enum: [homologation, production] }
         has_token_homologation: { type: boolean }
@@ -9328,6 +9365,8 @@ components:
         nfse_send_reform: { type: boolean, description: "Send the tax reform (IBS/CBS) fields." }
         nfse_ibs_cbs_cst: { type: string, description: "IBS/CBS CST (3 digits)." }
         nfse_ibs_cbs_class: { type: string, description: "IBS/CBS tax classification (cClassTrib, 6 digits)." }
+        wo_parts_enabled: { type: boolean, description: "Issue the parts invoice of work orders with the NFS-e: NFC-e for people (or no document), NF-e for companies." }
+        nfe_series: { type: integer, description: "NF-e (model 55) series (1 to 999)." }
     FiscalSettingsRequest:
       type: object
       additionalProperties: false
@@ -9349,6 +9388,8 @@ components:
         nfse_send_reform: { type: boolean }
         nfse_ibs_cbs_cst: { type: string, pattern: "^[0-9]{3}$" }
         nfse_ibs_cbs_class: { type: string, pattern: "^[0-9]{6}$" }
+        wo_parts_enabled: { type: boolean, description: "Absent keeps the current value." }
+        nfe_series: { type: integer, minimum: 1, maximum: 999, description: "Absent keeps the current value." }
     OkResult:
       type: object
       additionalProperties: false
