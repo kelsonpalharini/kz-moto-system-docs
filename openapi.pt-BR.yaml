@@ -3,7 +3,7 @@
 openapi: 3.1.0
 info:
   title: "API do KZ Moto System"
-  version: 0.29.0
+  version: 0.30.0
   summary: Multi-tenant management API for automotive repair shops.
   description: |
     API REST consumida diretamente pelo frontend web (sem BFF).
@@ -32,6 +32,9 @@ servers:
     description: "Desenvolvimento local (make run ou make docker-up)"
 security: []
 tags:
+  - name: fiscal
+    description: "Documentos fiscais (NFC-e, NFS-e, NF-e) pela Focus NFe; configurações
+      por oficina e dados fiscais dos produtos."
   - name: intelligence
     description: "KZ Intelligence - oportunidades detectadas nos dados da oficina
       (módulo de licença ai)."
@@ -1690,6 +1693,157 @@ paths:
                 $ref: "#/components/schemas/PlatformAIUsage"
         "401": {$ref: "#/components/responses/Unauthorized"}
         "403": {$ref: "#/components/responses/Forbidden"}
+        "422": {$ref: "#/components/responses/ValidationFailed"}
+  /api/v1/tenants/{tenantID}/fiscal/settings:
+    get:
+      operationId: getFiscalSettings
+      tags: [fiscal]
+      summary: "Configurações fiscais da oficina"
+      description: "Exige `fiscal.read`. Ambiente da Focus NFe, se há tokens salvos
+        (nunca devolvidos), trava de produção, NFC-e ligada e série, e o padrão do
+        PDV (fiscal ou não fiscal)."
+      security: [{bearerAuth: []}]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+      responses:
+        "200":
+          description: The settings (defaults when never saved).
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FiscalSettings"
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+    put:
+      operationId: putFiscalSettings
+      tags: [fiscal]
+      summary: "Salvar as configurações fiscais"
+      description: "Exige `fiscal.manage`. Tokens só de escrita (ausente mantém, vazio
+        remove), cifrados com SECRETS_KEY. Produção exige o token e allow_production
+        (emitir notas reais)."
+      security: [{bearerAuth: []}]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FiscalSettingsRequest"
+      responses:
+        "200":
+          description: The saved settings.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FiscalSettings"
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "415": {$ref: "#/components/responses/UnsupportedMediaType"}
+        "422": {$ref: "#/components/responses/ValidationFailed"}
+  /api/v1/tenants/{tenantID}/fiscal/settings/test:
+    post:
+      operationId: testFiscalSettings
+      tags: [fiscal]
+      summary: "Testar o token da Focus NFe"
+      description: "Exige `fiscal.manage`. Consulta de leitura (CFOP 5102) com o token
+        do ambiente atual ou de `environment`; nenhuma nota é emitida. 409 fiscal_token_missing;
+        502 fiscal_token_rejected / fiscal_provider_error."
+      security: [{bearerAuth: []}]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - name: environment
+          in: query
+          schema: {type: string, enum: [homologation, production]}
+      responses:
+        "200":
+          description: The token works.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OkResult"
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "422": {$ref: "#/components/responses/ValidationFailed"}
+        "502":
+          description: Focus NFe rejected the token or failed.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /api/v1/tenants/{tenantID}/products/{productID}/tax-profile:
+    get:
+      operationId: getProductTaxProfile
+      tags: [fiscal]
+      summary: "Dados fiscais do produto"
+      description: "Exige `fiscal.read`. CFOP, CST/CSOSN, origem, PIS e COFINS usados
+        nas notas (padrões do Simples Nacional quando nunca salvo; o NCM fica no produto)."
+      security: [{bearerAuth: []}]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - name: productID
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        "200":
+          description: The profile.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProductTaxProfile"
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+    put:
+      operationId: putProductTaxProfile
+      tags: [fiscal]
+      summary: "Salvar os dados fiscais do produto"
+      description: "Exige `fiscal.manage`."
+      security: [{bearerAuth: []}]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - name: productID
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProductTaxProfileRequest"
+      responses:
+        "200":
+          description: The saved profile.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProductTaxProfile"
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "415": {$ref: "#/components/responses/UnsupportedMediaType"}
         "422": {$ref: "#/components/responses/ValidationFailed"}
   /api/v1/tenants/{tenantID}/legal-entities:
     get:
@@ -9094,6 +9248,64 @@ components:
               dismissed: {type: integer}
               expired: {type: integer}
               potential_value: {type: string, pattern: "^-?[0-9]+(\\.[0-9]+)?$"}
+    FiscalSettings:
+      type: object
+      additionalProperties: false
+      required: [environment, has_token_homologation, has_token_production, allow_production,
+        nfce_enabled, nfce_series, pdv_default_fiscal]
+      properties:
+        environment: {type: string, enum: [homologation, production]}
+        has_token_homologation: {type: boolean}
+        has_token_production: {type: boolean}
+        allow_production: {type: boolean, description: "Issue real notes (production);
+            off by default."}
+        nfce_enabled: {type: boolean}
+        nfce_series: {type: integer}
+        pdv_default_fiscal: {type: boolean}
+    FiscalSettingsRequest:
+      type: object
+      additionalProperties: false
+      required: [environment, allow_production, nfce_enabled, nfce_series, pdv_default_fiscal]
+      properties:
+        environment: {type: string, enum: [homologation, production]}
+        token_homologation: {type: [string, "null"], maxLength: 200, description: "Write-only.
+            Absent keeps, empty removes."}
+        token_production: {type: [string, "null"], maxLength: 200, description: "Write-only.
+            Absent keeps, empty removes."}
+        allow_production: {type: boolean}
+        nfce_enabled: {type: boolean}
+        nfce_series: {type: integer, minimum: 1, maximum: 999}
+        pdv_default_fiscal: {type: boolean}
+    OkResult:
+      type: object
+      additionalProperties: false
+      required: [ok]
+      properties:
+        ok: {type: boolean}
+    ProductTaxProfileRequest:
+      type: object
+      additionalProperties: false
+      required: [cfop, icms_situation, origin, pis_situation, cofins_situation]
+      properties:
+        cfop: {type: string, pattern: "^[1-7][0-9]{3}$"}
+        icms_situation: {type: string, pattern: "^[0-9]{2,3}$", description: "CST
+            (2 digits) or CSOSN (3 digits)."}
+        origin: {type: integer, minimum: 0, maximum: 8}
+        pis_situation: {type: string, pattern: "^[0-9]{2}$"}
+        cofins_situation: {type: string, pattern: "^[0-9]{2}$"}
+    ProductTaxProfile:
+      type: object
+      additionalProperties: false
+      required: [product_id, cfop, icms_situation, origin, pis_situation, cofins_situation,
+        custom]
+      properties:
+        product_id: {type: string, format: uuid}
+        cfop: {type: string}
+        icms_situation: {type: string}
+        origin: {type: integer}
+        pis_situation: {type: string}
+        cofins_situation: {type: string}
+        custom: {type: boolean, description: "False when the defaults are shown."}
     PlatformAIInsights:
       type: object
       additionalProperties: false
