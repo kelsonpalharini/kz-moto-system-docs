@@ -3,7 +3,7 @@
 openapi: 3.1.0
 info:
   title: "API do KZ Moto System"
-  version: 0.31.0
+  version: 0.32.0
   summary: Multi-tenant management API for automotive repair shops.
   description: |
     API REST consumida diretamente pelo frontend web (sem BFF).
@@ -1700,8 +1700,9 @@ paths:
       tags: [fiscal]
       summary: "Configurações fiscais da oficina"
       description: "Exige `fiscal.read`. Ambiente da Focus NFe, se há tokens salvos
-        (nunca devolvidos), trava de produção, NFC-e ligada e série, e o padrão do
-        PDV (fiscal ou não fiscal)."
+        (nunca devolvidos), trava de produção, NFC-e ligada e série, o padrão do PDV
+        (fiscal ou não fiscal) e a NFS-e das OS (ligada, série e próximo número da
+        DPS por ambiente, códigos de tributação e campos da reforma)."
       security: [{bearerAuth: []}]
       parameters:
         - $ref: "#/components/parameters/TenantID"
@@ -1912,6 +1913,116 @@ paths:
                 $ref: "#/components/schemas/FiscalDocumentList"
         "401": {$ref: "#/components/responses/Unauthorized"}
         "403": {$ref: "#/components/responses/Forbidden"}
+  /api/v1/tenants/{tenantID}/work-orders/{workOrderID}/nfse:
+    post:
+      operationId: issueWorkOrderNFSe
+      tags: [fiscal]
+      summary: "Emitir a NFS-e de uma OS"
+      description: "Exige `fiscal.issue`. Só OS concluída ou entregue; NFS-e nacional
+        (DPS) com as linhas de mão de obra, serviço e taxa aprovadas ou feitas (peças
+        nunca entram na NFS-e). Precisa da empresa da loja com CNPJ, código IBGE da
+        cidade e regime tributário, e NFS-e ligada nas configurações fiscais. O número
+        da DPS vem das configurações (uma sequência por ambiente). Assíncrona na Focus
+        NFe: normalmente responde `processing`; a API consulta de novo a cada minuto
+        (e em POST .../refresh). Autorizada, o cliente recebe a mensagem nfse_issued
+        (e-mail com XML e DANFSe anexos, WhatsApp com links), com aceite."
+      security: [{bearerAuth: []}]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - name: workOrderID
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        "201":
+          description: The document (processing, authorized, rejected or error, with
+            the provider message).
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FiscalDocument"
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "422": {$ref: "#/components/responses/ValidationFailed"}
+        "502":
+          description: Focus NFe rejected the token.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /api/v1/tenants/{tenantID}/work-orders/{workOrderID}/fiscal-documents:
+    get:
+      operationId: listWorkOrderFiscalDocuments
+      tags: [fiscal]
+      summary: "Documentos fiscais de uma OS"
+      description: "Exige `fiscal.read` e acesso à loja da OS. Mais recentes primeiro."
+      security: [{bearerAuth: []}]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - name: workOrderID
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        "200":
+          description: The documents.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FiscalDocumentList"
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+  /api/v1/tenants/{tenantID}/fiscal-documents/{documentID}/refresh:
+    post:
+      operationId: refreshFiscalDocument
+      tags: [fiscal]
+      summary: "Consultar a situação de uma NFS-e em processamento"
+      description: "Exige `fiscal.issue`. Consulta na Focus NFe a situação de uma
+        NFS-e em `processing` e registra o resultado (autorizada, rejeitada ou ainda
+        em processamento); outros documentos voltam sem mudança. Quando fica autorizada,
+        a mensagem ao cliente sai uma única vez."
+      security: [{bearerAuth: []}]
+      parameters:
+        - $ref: "#/components/parameters/TenantID"
+        - name: documentID
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        "200":
+          description: The document after the check.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FiscalDocument"
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "502":
+          description: Focus NFe rejected the token.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
   /api/v1/tenants/{tenantID}/fiscal-documents:
     get:
       operationId: listFiscalDocuments
@@ -1941,9 +2052,10 @@ paths:
     post:
       operationId: cancelFiscalDocument
       tags: [fiscal]
-      summary: "Cancelar uma NFC-e autorizada"
+      summary: "Cancelar uma NFC-e ou NFS-e autorizada"
       description: "Exige `fiscal.issue`. Justificativa de 15 a 255 caracteres; a
-        SEFAZ aceita cancelar NFC-e até 30 minutos após a emissão (senão 502 fiscal_cancel_refused)."
+        SEFAZ aceita cancelar NFC-e até 30 minutos após a emissão, e a NFS-e segue
+        o prazo do município (senão 502 fiscal_cancel_refused com a mensagem do provedor)."
       security: [{bearerAuth: []}]
       parameters:
         - $ref: "#/components/parameters/TenantID"
@@ -9260,7 +9372,7 @@ components:
     MessageEvent:
       type: string
       enum: [work_order_opened, work_order_started, work_order_completed, work_order_delivered,
-        appointment_reminder, sale_completed, fiscal_document_issued]
+        appointment_reminder, sale_completed, fiscal_document_issued, nfse_issued]
     MessageTemplate:
       type: object
       additionalProperties: false
@@ -9395,7 +9507,8 @@ components:
       additionalProperties: false
       required: [id, kind, source_type, source_id, environment, status, number, series,
         access_key, total, provider_status, message, xml_url, danfe_url, qrcode_url,
-        cancel_reason, created_at, authorized_at, cancelled_at]
+        cancel_reason, created_at, authorized_at, cancelled_at, source_code, dps_series,
+        dps_number, verification_code, portal_url, checked_at]
       properties:
         id: {type: string, format: uuid}
         kind: {type: string, enum: [nfce, nfse, nfe]}
@@ -9417,6 +9530,16 @@ components:
         created_at: {type: string, format: date-time}
         authorized_at: {type: [string, "null"], format: date-time}
         cancelled_at: {type: [string, "null"], format: date-time}
+        source_code: {type: [string, "null"], description: "Sale or work order code."}
+        dps_series: {type: [integer, "null"], description: "NFS-e only: DPS series."}
+        dps_number: {type: [integer, "null"], format: int64, description: "NFS-e only:
+            DPS number."}
+        verification_code: {type: [string, "null"], description: "NFS-e only: verification
+            code at the national portal."}
+        portal_url: {type: [string, "null"], description: "NFS-e only: page of the
+            note at the national portal."}
+        checked_at: {type: [string, "null"], format: date-time, description: "Last
+            time the provider was asked about the document."}
     FiscalDocumentList:
       type: object
       additionalProperties: false
@@ -9427,7 +9550,10 @@ components:
       type: object
       additionalProperties: false
       required: [environment, has_token_homologation, has_token_production, allow_production,
-        nfce_enabled, nfce_series, pdv_default_fiscal]
+        nfce_enabled, nfce_series, pdv_default_fiscal, nfse_enabled, nfse_series,
+        nfse_next_number_homologation, nfse_next_number_production, nfse_service_code,
+        nfse_municipal_code, nfse_nbs_code, nfse_simples_regime, nfse_send_reform,
+        nfse_ibs_cbs_cst, nfse_ibs_cbs_class]
       properties:
         environment: {type: string, enum: [homologation, production]}
         has_token_homologation: {type: boolean}
@@ -9437,6 +9563,27 @@ components:
         nfce_enabled: {type: boolean}
         nfce_series: {type: integer}
         pdv_default_fiscal: {type: boolean}
+        nfse_enabled: {type: boolean, description: "NFS-e (national standard) for
+            work orders."}
+        nfse_series: {type: integer, description: "DPS series (1 to 49999)."}
+        nfse_next_number_homologation: {type: integer, format: int64, description: "Next
+            DPS number in homologation (read-only)."}
+        nfse_next_number_production: {type: integer, format: int64, description: "Next
+            DPS number in production (read-only)."}
+        nfse_service_code: {type: string, description: "National ISSQN taxation code
+            (cTribNac, 6 digits); 140101 = vehicle maintenance and repair."}
+        nfse_municipal_code: {type: [string, "null"], description: "Municipal taxation
+            code, when the city requires one."}
+        nfse_nbs_code: {type: [string, "null"], description: "NBS code (9 digits),
+            when required."}
+        nfse_simples_regime: {type: [integer, "null"], enum: [1, 2, 3, null], description: "Simples
+            Nacional ME/EPP: 1 all taxes in SN, 2 ISSQN outside SN, 3 all outside
+            SN."}
+        nfse_send_reform: {type: boolean, description: "Send the tax reform (IBS/CBS)
+            fields."}
+        nfse_ibs_cbs_cst: {type: string, description: "IBS/CBS CST (3 digits)."}
+        nfse_ibs_cbs_class: {type: string, description: "IBS/CBS tax classification
+            (cClassTrib, 6 digits)."}
     FiscalSettingsRequest:
       type: object
       additionalProperties: false
@@ -9451,6 +9598,18 @@ components:
         nfce_enabled: {type: boolean}
         nfce_series: {type: integer, minimum: 1, maximum: 999}
         pdv_default_fiscal: {type: boolean}
+        nfse_enabled: {type: boolean, description: "Absent keeps the current value
+            (same for every nfse_* field)."}
+        nfse_series: {type: integer, minimum: 1, maximum: 49999}
+        nfse_service_code: {type: string, pattern: "^[0-9]{6}$"}
+        nfse_municipal_code: {type: [string, "null"], maxLength: 20, description: "Empty
+            clears."}
+        nfse_nbs_code: {type: [string, "null"], description: "9 digits; empty clears."}
+        nfse_simples_regime: {type: [integer, "null"], minimum: 0, maximum: 3, description: "0
+            clears."}
+        nfse_send_reform: {type: boolean}
+        nfse_ibs_cbs_cst: {type: string, pattern: "^[0-9]{3}$"}
+        nfse_ibs_cbs_class: {type: string, pattern: "^[0-9]{6}$"}
     OkResult:
       type: object
       additionalProperties: false
